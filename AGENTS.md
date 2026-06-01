@@ -92,3 +92,34 @@ Do NOT ask when:
 | [CODING_CONVENTIONS.md](.github/contributing/CODING_CONVENTIONS.md) | Code style and patterns |
 | [EXAMPLES.md](.github/contributing/EXAMPLES.md) | Examples reference |
 | [PULL_REQUESTS.md](.github/contributing/PULL_REQUESTS.md) | PR guidelines |
+
+## Local Cloth Grasp Notes
+
+- The dual Piper-X shirt lift demo lives at
+  `examples/IPC_Solver/ipc_dual_piperx_shirt_lift.py`.
+  The verified fast path is:
+
+  ```bash
+  .venv/bin/python examples/IPC_Solver/ipc_dual_piperx_shirt_lift.py \
+    --hide-piper --horizon-scale 0.5 --record
+  ```
+
+- Genesis IPC cloth uses `gs.materials.FEM.Cloth` with OBJ shell meshes and
+  `IPCCouplerOptions`; it does not expose the same vertex constraint API used by
+  non-IPC FEM examples. `FEMEntity.set_vertex_constraints()` rejects IPCCoupler.
+- The local Piper-X URDF imports through Genesis' legacy URDF parser because
+  some DAE meshes are not decoded by the primary parser. Keep generated URDF
+  copies local to output directories and rewrite relative mesh paths to absolute
+  paths when copying the URDF outside `/home/horizon/newton_cloth`.
+- Raw Piper gripper collision meshes are not IPC-friendly at qpos0: closed
+  finger pairs can make the IPC world invalid. For scripted cloth lift, the demo
+  uses simple rigid box finger proxies and keeps the full Piper import as a
+  visual/controller reference.
+- PBD cloth attachment is the reliable verified lift path in this repo state.
+  Use `gs.materials.PBD.Cloth`, choose nearby particles, then call
+  `cloth.fix_particles_to_link(proxy.link_start, particles_idx_local=...)`.
+  After attachment, `get_particles_pos()` can contain sentinel positions near
+  `100` for inactive/attached particles; filter those when logging centroid or
+  height diagnostics.
+- PBD cloth should run on the GPU backend by default here. CPU PBD stepping was
+  too slow/hung before phase diagnostics in the local verification run.
