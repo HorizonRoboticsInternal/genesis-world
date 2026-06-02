@@ -95,6 +95,7 @@ def parse_args():
     parser.add_argument("--record", action="store_true", default=False, help="Record the three camera MP4s.")
     parser.add_argument("--output-dir", default="recordings/ipc_dual_piperx_shirt_lift")
     parser.add_argument("--video-name", default="ipc_dual_piperx_shirt_lift.mp4")
+    parser.add_argument("--combined-video-name", default="left_mid_right.mp4")
     parser.add_argument("--shirt-obj", type=Path, default=DEX_TSHIRT_OBJ)
     parser.add_argument("--shirt-usd", type=Path, default=DEX_TSHIRT_USD)
     parser.add_argument(
@@ -462,6 +463,53 @@ def record_frame(cameras, record):
             camera.render()
 
 
+def camera_recording_path(output_dir, video_path, camera_name):
+    if camera_name == "head_camera":
+        return video_path
+    return output_dir / f"{camera_name}.mp4"
+
+
+def save_camera_recordings(camera_items, output_dir, video_path):
+    recording_paths = {}
+    for camera_name, camera in camera_items:
+        camera_path = camera_recording_path(output_dir, video_path, camera_name)
+        camera.stop_recording(save_to_filename=str(camera_path), fps=60)
+        recording_paths[camera_name] = camera_path
+        print(f"Saved {camera_name} recording to {camera_path}")
+    return recording_paths
+
+
+def compose_left_mid_right_video(recording_paths, output_dir, combined_video_name):
+    combined_path = output_dir / combined_video_name
+    scale_pad = "scale=640:480:force_original_aspect_ratio=decrease,pad=640:480:(ow-iw)/2:(oh-ih)/2"
+    filter_complex = (
+        f"[0:v]{scale_pad}[left];"
+        f"[1:v]{scale_pad}[mid];"
+        f"[2:v]{scale_pad}[right];"
+        "[left][mid][right]hstack=inputs=3[v]"
+    )
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(recording_paths["left_camera"]),
+        "-i",
+        str(recording_paths["head_camera"]),
+        "-i",
+        str(recording_paths["right_camera"]),
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "[v]",
+        "-r",
+        "60",
+        str(combined_path),
+    ]
+    subprocess.run(command, check=True)
+    print(f"Saved left/mid/right recording to {combined_path}")
+    return combined_path
+
+
 def step_phase(
     scene,
     robot,
@@ -743,10 +791,8 @@ def main():
         )
     finally:
         if args.record:
-            for camera_name, camera in camera_items:
-                camera_path = video_path if camera_name == "head_camera" else output_dir / f"{camera_name}.mp4"
-                camera.stop_recording(save_to_filename=str(camera_path), fps=60)
-                print(f"Saved {camera_name} recording to {camera_path}")
+            recording_paths = save_camera_recordings(camera_items, output_dir, video_path)
+            compose_left_mid_right_video(recording_paths, output_dir, args.combined_video_name)
 
     final_stats = cloth_stats(shirt)
     initial_z = SHIRT_CENTER[2]

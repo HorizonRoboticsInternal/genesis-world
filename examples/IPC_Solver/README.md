@@ -45,7 +45,9 @@ Beware only Linux/Windows x86 CPU & Nvidia GPU is supported for now.
    `head_camera` at `392x252`, plus `left_camera` and `right_camera` wrist
    views. With `--show-piper`, the generated Piper-X URDF injects fixed
    RobotTwin wrist camera links under `left_link6` and `right_link6`, and the
-   Genesis wrist cameras attach to those links.
+   Genesis wrist cameras attach to those links. Recording writes the three
+   individual camera videos and a concatenated `left_mid_right.mp4` with
+   `left_camera`, `head_camera`, and `right_camera` arranged horizontally.
 
    To regenerate that OBJ from the local DexGarmentLab USD asset, use Isaac
    Sim's Python because the Genesis venv does not provide `pxr`:

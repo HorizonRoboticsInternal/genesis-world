@@ -146,7 +146,9 @@ Do NOT ask when:
   resized profile `392x252`, `fovy=44.23872564716461`, translated by the
   Genesis table's `y=-0.48` workspace offset. This replaces the older
   front/center debug view because the ClothesFoldingEnv middle camera was noted
-  as slightly off.
+  as slightly off. When recording, the script saves individual camera MP4s plus
+  `left_mid_right.mp4`, a 60 FPS horizontal stack of `left_camera`,
+  `head_camera`, and `right_camera`.
 - Genesis can warn about falling back to the legacy URDF parser for Piper DAE
   meshes and filtering neutral self-collision geometry pairs; the local short
   runtime check completed despite those warnings.
