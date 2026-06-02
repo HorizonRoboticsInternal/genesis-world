@@ -24,7 +24,8 @@ TABLE_CENTER = np.array([0.0, -0.48, 0.065], dtype=np.float32)
 TABLE_SIZE = np.array([0.82, 0.72, 0.13], dtype=np.float32)
 TABLE_TOP_Z = TABLE_CENTER[2] + TABLE_SIZE[2] * 0.5
 SHIRT_CENTER = np.array([0.0, -0.48, TABLE_TOP_Z + 0.010], dtype=np.float32)
-ROBOT_ROOT_POS = (0.0, -0.86, 0.0)
+ROBOT_ROOT_POS = (-0.30, float(TABLE_CENTER[1] - TABLE_SIZE[1] * 0.5 - 0.02), 0.0)
+ROBOT_ROOT_EULER = (0.0, 0.0, 90.0)
 GRIPPER_PAIR_XS = (-0.08, 0.08)
 GRIPPER_START_Y = SHIRT_CENTER[1] - 0.26
 GRIPPER_CONTACT_Y = SHIRT_CENTER[1] - 0.02
@@ -57,12 +58,41 @@ GENESIS_IPC_CLOTH_KWARGS = {
     "bending_stiffness": 10.0,
     "friction_mu": 2.0,
 }
+PIPERX_WRIST_CAMERA_ORIGINS = {
+    "left": {
+        "xyz": "-0.0096489170911759 -0.08009372951791657 0.04279548930003773",
+        "rpy": "-0.017085131075935567 -1.225237413769258 1.5698794493564652",
+    },
+    "right": {
+        "xyz": "-0.0076363572782560665 -0.07947460457157493 0.043216980311924016",
+        "rpy": "-0.002445405606400719 -1.216058912088991 1.5665889686029582",
+    },
+}
+ROBOTWIN_HEAD_CAMERA = {
+    "position": np.array([0.01715773707478663, -0.4573830598833294, 1.353635842513242], dtype=np.float32),
+    "forward": np.array([0.03060834543810837, 0.5532082633105504, -0.8324804782062258], dtype=np.float32),
+    "left": np.array([-0.998951221970191, 0.04530567142677667, -0.006622103958085714], dtype=np.float32),
+}
+ROBOTWIN_HEAD_CAMERA_SCENE_OFFSET = np.array([0.0, TABLE_CENTER[1], 0.0], dtype=np.float32)
+ROBOTWIN_HEAD_CAMERA_FOVY = 44.23872564716461
+ROBOTWIN_CAMERA_RES = (392, 252)
+WRIST_CAMERA_RES = (640, 480)
+WRIST_CAMERA_FOVY = 50.0
+WRIST_CAMERA_LINK_OFFSET = np.array(
+    [
+        [0.0, 0.0, -1.0, 0.0],
+        [-1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ],
+    dtype=np.float32,
+)
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Scripted Genesis shirt grasp/lift demo.")
     parser.add_argument("--vis", action="store_true", default=False, help="Show the Genesis viewer.")
-    parser.add_argument("--record", action="store_true", default=False, help="Record the center camera MP4.")
+    parser.add_argument("--record", action="store_true", default=False, help="Record the three camera MP4s.")
     parser.add_argument("--output-dir", default="recordings/ipc_dual_piperx_shirt_lift")
     parser.add_argument("--video-name", default="ipc_dual_piperx_shirt_lift.mp4")
     parser.add_argument("--shirt-obj", type=Path, default=DEX_TSHIRT_OBJ)
@@ -73,7 +103,13 @@ def parse_args():
         default=False,
         help="Regenerate --shirt-obj from --shirt-usd before running.",
     )
-    parser.add_argument("--hide-piper", action="store_true", default=False, help="Hide the Piper-X arm visuals.")
+    parser.add_argument(
+        "--show-piper",
+        action="store_true",
+        default=False,
+        help="Add stationary dual Piper-X arm visuals along the table front edge.",
+    )
+    parser.add_argument("--hide-piper", action="store_true", default=False, help=argparse.SUPPRESS)
     parser.add_argument(
         "--shirt-scale",
         type=float,
@@ -91,6 +127,10 @@ def parse_args():
     return parser.parse_args()
 
 
+def should_show_piper(args):
+    return bool(args.show_piper and not args.hide_piper)
+
+
 def make_piper_urdf(path):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -104,6 +144,8 @@ def make_piper_urdf(path):
         filename = mesh.attrib.get("filename")
         if filename and not Path(filename).is_absolute():
             mesh.set("filename", str(source_root / filename))
+
+    add_piperx_wrist_camera_links(root)
 
     finger_collision_specs = {
         "left_link7": ("0.000 -0.046 -0.026", "0 0 0"),
@@ -129,6 +171,22 @@ def make_piper_urdf(path):
 
     tree.write(path, encoding="utf-8", xml_declaration=True)
     return path
+
+
+def add_piperx_wrist_camera_links(root):
+    link_names = {link.attrib["name"] for link in root.findall("link")}
+    for side in ("left", "right"):
+        parent_link = f"{side}_link6"
+        camera_link = f"{side}_camera"
+        if parent_link not in link_names or camera_link in link_names:
+            continue
+
+        ET.SubElement(root, "link", {"name": camera_link})
+        joint = ET.SubElement(root, "joint", {"name": f"{side}_link6_to_{camera_link}", "type": "fixed"})
+        ET.SubElement(joint, "origin", PIPERX_WRIST_CAMERA_ORIGINS[side])
+        ET.SubElement(joint, "parent", {"link": parent_link})
+        ET.SubElement(joint, "child", {"link": camera_link})
+        link_names.add(camera_link)
 
 
 def set_robot_init_qpos(robot, qpos):
@@ -227,11 +285,12 @@ def make_scene(args, shirt_mesh_path, robot_urdf_path):
         surface=gs.surfaces.Default(color=SHIRT_COLOR),
     )
     robot = None
-    if not args.hide_piper:
+    if should_show_piper(args):
         robot = scene.add_entity(
             morph=gs.morphs.URDF(
                 file=str(robot_urdf_path),
                 pos=ROBOT_ROOT_POS,
+                euler=ROBOT_ROOT_EULER,
                 fixed=True,
                 merge_fixed_links=False,
                 collision=True,
@@ -264,28 +323,58 @@ def make_scene(args, shirt_mesh_path, robot_urdf_path):
         )
         finger_proxies.append((finger_name, finger))
 
-    center_cam = scene.add_camera(
-        res=(960, 540),
-        pos=(0.15, -1.34, 0.82),
-        lookat=(0.0, -0.44, 0.30),
-        fov=52,
+    camera_items = add_robotwin_cameras(scene)
+    return scene, table, shirt, robot, finger_proxies, camera_items
+
+
+def robotwin_camera_up(forward, left):
+    up = np.cross(forward, left)
+    return up / np.linalg.norm(up)
+
+
+def add_robotwin_cameras(scene):
+    head_pos = ROBOTWIN_HEAD_CAMERA["position"] + ROBOTWIN_HEAD_CAMERA_SCENE_OFFSET
+    head_forward = ROBOTWIN_HEAD_CAMERA["forward"]
+    head_left = ROBOTWIN_HEAD_CAMERA["left"]
+    head_cam = scene.add_camera(
+        res=ROBOTWIN_CAMERA_RES,
+        pos=tuple(head_pos),
+        lookat=tuple(head_pos + head_forward),
+        up=tuple(robotwin_camera_up(head_forward, head_left)),
+        fov=ROBOTWIN_HEAD_CAMERA_FOVY,
         GUI=False,
     )
     left_cam = scene.add_camera(
-        res=(640, 480),
+        res=WRIST_CAMERA_RES,
         pos=(-0.46, -1.02, 0.50),
         lookat=(-0.12, -0.48, 0.16),
-        fov=50,
+        fov=WRIST_CAMERA_FOVY,
         GUI=False,
     )
     right_cam = scene.add_camera(
-        res=(640, 480),
+        res=WRIST_CAMERA_RES,
         pos=(0.46, -1.02, 0.50),
         lookat=(0.12, -0.48, 0.16),
-        fov=50,
+        fov=WRIST_CAMERA_FOVY,
         GUI=False,
     )
-    return scene, table, shirt, robot, finger_proxies, (center_cam, left_cam, right_cam)
+    return (
+        ("head_camera", head_cam),
+        ("left_camera", left_cam),
+        ("right_camera", right_cam),
+    )
+
+
+def attach_robotwin_wrist_cameras(robot, camera_items):
+    if robot is None:
+        return
+
+    cameras_by_name = dict(camera_items)
+    for side in ("left", "right"):
+        camera_name = f"{side}_camera"
+        camera = cameras_by_name[camera_name]
+        camera.attach(robot.get_link(camera_name), WRIST_CAMERA_LINK_OFFSET)
+        camera.move_to_attach()
 
 
 def proxy_state(y, z, gap):
@@ -360,7 +449,14 @@ def cloth_stats(shirt):
     }
 
 
+def update_attached_cameras(cameras):
+    for camera in cameras:
+        if getattr(camera, "_attached_link", None) is not None:
+            camera.move_to_attach()
+
+
 def record_frame(cameras, record):
+    update_attached_cameras(cameras)
     if record:
         for camera in cameras:
             camera.render()
@@ -400,10 +496,15 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     shirt_mesh_path = resolve_tshirt_obj(args)
-    robot_urdf_path = make_piper_urdf(output_dir / "piper_x_dualarm_genesis.urdf")
+    robot_urdf_path = (
+        make_piper_urdf(output_dir / "piper_x_dualarm_genesis.urdf")
+        if should_show_piper(args)
+        else None
+    )
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, logging_level="info")
-    scene, _, shirt, robot, finger_proxies, cameras = make_scene(args, shirt_mesh_path, robot_urdf_path)
+    scene, _, shirt, robot, finger_proxies, camera_items = make_scene(args, shirt_mesh_path, robot_urdf_path)
+    cameras = [camera for _, camera in camera_items]
 
     neutral_qpos = np.zeros(16, dtype=np.float32)
     neutral_qpos[[2, 3]] = 0.70
@@ -412,6 +513,7 @@ def main():
     if robot is not None:
         set_robot_init_qpos(robot, neutral_qpos)
     scene.build()
+    attach_robotwin_wrist_cameras(robot, camera_items)
 
     if robot is not None:
         robot.set_dofs_kp(np.array([4500.0] * 12 + [800.0] * 4, dtype=np.float32), ALL_CONTROL_DOFS)
@@ -641,10 +743,10 @@ def main():
         )
     finally:
         if args.record:
-            cameras[0].stop_recording(save_to_filename=str(video_path), fps=60)
-            for index, camera in enumerate(cameras[1:], start=1):
-                camera.stop_recording(save_to_filename=str(output_dir / f"camera_{index}.mp4"), fps=60)
-            print(f"Saved center-camera recording to {video_path}")
+            for camera_name, camera in camera_items:
+                camera_path = video_path if camera_name == "head_camera" else output_dir / f"{camera_name}.mp4"
+                camera.stop_recording(save_to_filename=str(camera_path), fps=60)
+                print(f"Saved {camera_name} recording to {camera_path}")
 
     final_stats = cloth_stats(shirt)
     initial_z = SHIRT_CENTER[2]

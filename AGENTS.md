@@ -99,14 +99,21 @@ Do NOT ask when:
   `examples/IPC_Solver/ipc_dual_piperx_shirt_lift.py`.
   The current verified path uses IPC FEM cloth, standalone IPC-coupled rigid
   parallel-gripper boxes as the actual contact driver, a table, three cameras,
-  and an imported DexGarmentLab T-shirt mesh. The Piper-X arms can be visible,
-  but they are held stationary while the standalone grippers test grasping:
+  and an imported DexGarmentLab T-shirt mesh. The Piper-X arms are opt-in
+  visual context and are held stationary while the standalone grippers test
+  grasping:
 
   ```bash
   .venv/bin/python examples/IPC_Solver/ipc_dual_piperx_shirt_lift.py \
-    --record --hide-piper \
+    --record \
     --output-dir recordings/ipc_dual_piperx_shirt_lift_ipc_y_grip
   ```
+
+  Add `--show-piper` when the stationary dual Piper-X arms should be visible.
+  The generated Genesis URDF rotates the local dual-arm baseline by yaw `90 deg`
+  and places the root at `(-0.30, -0.86, 0.0)`, so the URDF's built-in
+  right-base offset becomes a side-by-side table-front baseline with the shirt
+  on the `+y` side of the arms.
 
 - The demo uses the checked-in DexGarmentLab short-sleeve T-shirt OBJ asset at
   `genesis/assets/meshes/garments/dexgarmentlab_short_sleeve_tshirt.obj`. The
@@ -126,9 +133,21 @@ Do NOT ask when:
   as Genesis' IPC teleop examples. The current demo has no attachment calls;
   the shirt is moved only by IPC contact/friction against the rigid gripper
   boxes.
-- The default CLI path still imports the Piper-X URDF for visual context, but
-  holds the arms at their neutral qpos and does not run an arm trajectory.
-  Genesis can warn about falling back to the legacy URDF parser for Piper DAE
+- When `--show-piper` is used, the script injects RobotTwin-style
+  `left_camera` and `right_camera` fixed links under `left_link6` and
+  `right_link6` using the calibrated Piper-X wrist camera origins from
+  `/home/horizon/robo_orchard_lab` branch
+  `test/deploy_ckpt_in_RoboOrchardLab`. Genesis cameras attach to those links
+  with the frame conversion from RobotTwin/SAPIEN camera axes (`+X` optical
+  forward, `+Y` image-left, `+Z` image-up) to Genesis/OpenGL camera axes. The
+  static `head_camera` uses the RobotTwin Piper-X world pose
+  `[0.01715773707478663, -0.4573830598833294, 1.353635842513242]`, forward
+  `[0.03060834543810837, 0.5532082633105504, -0.8324804782062258]`, and D455
+  resized profile `392x252`, `fovy=44.23872564716461`, translated by the
+  Genesis table's `y=-0.48` workspace offset. This replaces the older
+  front/center debug view because the ClothesFoldingEnv middle camera was noted
+  as slightly off.
+- Genesis can warn about falling back to the legacy URDF parser for Piper DAE
   meshes and filtering neutral self-collision geometry pairs; the local short
   runtime check completed despite those warnings.
 - Genesis IPC cloth uses `gs.materials.FEM.Cloth` with OBJ shell meshes and
