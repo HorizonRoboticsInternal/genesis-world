@@ -42,6 +42,11 @@ DEX_TSHIRT_USD = Path(
     "NoCollar_Ssleeve_FrontClose/TNSC_T_Shirt_Short_Sleeve/"
     "TNSC_T_Shirt_Short_Sleeve_obj.usd"
 )
+DEX_TSHIRT_OBJ = (
+    Path(__file__).resolve().parents[2]
+    / "genesis/assets/meshes/garments/dexgarmentlab_short_sleeve_tshirt.obj"
+)
+DEX_TSHIRT_EXPORTER = Path(__file__).resolve().parent / "export_dexgarmentlab_tshirt_asset.py"
 ISAACSIM_PYTHON = Path("/home/horizon/isaacsim_env/bin/python")
 SHIRT_COLOR = (1.0, 0.86, 0.08, 1.0)
 GENESIS_IPC_CLOTH_KWARGS = {
@@ -60,8 +65,14 @@ def parse_args():
     parser.add_argument("--record", action="store_true", default=False, help="Record the center camera MP4.")
     parser.add_argument("--output-dir", default="recordings/ipc_dual_piperx_shirt_lift")
     parser.add_argument("--video-name", default="ipc_dual_piperx_shirt_lift.mp4")
-    parser.add_argument("--mesh-name", default="dex_short_sleeve_tshirt.obj")
+    parser.add_argument("--shirt-obj", type=Path, default=DEX_TSHIRT_OBJ)
     parser.add_argument("--shirt-usd", type=Path, default=DEX_TSHIRT_USD)
+    parser.add_argument(
+        "--refresh-shirt-asset",
+        action="store_true",
+        default=False,
+        help="Regenerate --shirt-obj from --shirt-usd before running.",
+    )
     parser.add_argument("--hide-piper", action="store_true", default=False, help="Hide the Piper-X arm visuals.")
     parser.add_argument(
         "--shirt-scale",
@@ -69,7 +80,12 @@ def parse_args():
         default=0.55,
         help="Uniform scale applied to the DexGarmentLab T-shirt USD mesh.",
     )
-    parser.add_argument("--horizon-scale", type=float, default=1.0, help="Scale scripted phase lengths for smoke tests.")
+    parser.add_argument(
+        "--horizon-scale",
+        type=float,
+        default=1.0,
+        help="Scale scripted phase lengths for smoke tests.",
+    )
     parser.add_argument("--no-ipc", action="store_true", default=False, help="Disable IPC contacts for ablation.")
     parser.add_argument("--cpu", action="store_true", default=False, help="Force Genesis CPU backend.")
     return parser.parse_args()
@@ -102,7 +118,12 @@ def make_piper_urdf(path):
         for collision in list(link.findall("collision")):
             link.remove(collision)
         collision = ET.SubElement(link, "collision")
-        ET.SubElement(collision, "origin", xyz=finger_collision_specs[link_name][0], rpy=finger_collision_specs[link_name][1])
+        ET.SubElement(
+            collision,
+            "origin",
+            xyz=finger_collision_specs[link_name][0],
+            rpy=finger_collision_specs[link_name][1],
+        )
         geometry = ET.SubElement(collision, "geometry")
         ET.SubElement(geometry, "box", size="0.026 0.012 0.080")
 
@@ -122,94 +143,38 @@ def set_robot_init_qpos(robot, qpos):
 
 def export_tshirt_usd_to_obj(usd_path, obj_path, scale):
     usd_path = Path(usd_path).expanduser().resolve()
-    obj_path = Path(obj_path)
-    obj_path.parent.mkdir(parents=True, exist_ok=True)
+    obj_path = Path(obj_path).expanduser().resolve()
     if not usd_path.is_file():
         raise FileNotFoundError(f"DexGarmentLab T-shirt USD does not exist: {usd_path}")
     if not ISAACSIM_PYTHON.is_file():
         raise FileNotFoundError(f"Isaac Sim Python with pxr is missing: {ISAACSIM_PYTHON}")
+    if not DEX_TSHIRT_EXPORTER.is_file():
+        raise FileNotFoundError(f"DexGarmentLab T-shirt exporter is missing: {DEX_TSHIRT_EXPORTER}")
 
-    export_script = r'''
-from pathlib import Path
-import sys
-
-import numpy as np
-from pxr import Gf, Usd, UsdGeom
-
-usd_path = Path(sys.argv[1])
-obj_path = Path(sys.argv[2])
-scale = float(sys.argv[3])
-
-stage = Usd.Stage.Open(str(usd_path))
-if stage is None:
-    raise RuntimeError(f"Could not open USD stage: {usd_path}")
-
-vertices_by_mesh = []
-faces = []
-vertex_offset = 0
-for prim in stage.Traverse():
-    if not prim.IsA(UsdGeom.Mesh):
-        continue
-    mesh = UsdGeom.Mesh(prim)
-    points = mesh.GetPointsAttr().Get()
-    counts = mesh.GetFaceVertexCountsAttr().Get()
-    indices = mesh.GetFaceVertexIndicesAttr().Get()
-    if not points or not counts or not indices:
-        continue
-    xform = UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(
-        Usd.TimeCode.Default()
-    )
-    mesh_vertices = np.array(
-        [
-            tuple(xform.Transform(Gf.Vec3d(float(point[0]), float(point[1]), float(point[2]))))
-            for point in points
-        ],
-        dtype=np.float64,
-    )
-    cursor = 0
-    for count in counts:
-        face_indices = list(indices[cursor : cursor + count])
-        cursor += count
-        for i in range(1, count - 1):
-            faces.append(
-                (
-                    vertex_offset + face_indices[0] + 1,
-                    vertex_offset + face_indices[i] + 1,
-                    vertex_offset + face_indices[i + 1] + 1,
-                )
-            )
-    vertices_by_mesh.append(mesh_vertices)
-    vertex_offset += len(mesh_vertices)
-
-if not vertices_by_mesh:
-    raise RuntimeError(f"No mesh prims found in USD stage: {usd_path}")
-
-vertices = np.concatenate(vertices_by_mesh, axis=0)
-local_min = vertices.min(axis=0)
-local_max = vertices.max(axis=0)
-local_center = 0.5 * (local_min + local_max)
-vertices[:, 0] = vertices[:, 0] - local_center[0]
-vertices[:, 1] = vertices[:, 1] - local_center[1]
-vertices[:, 2] = vertices[:, 2] - local_min[2]
-vertices *= scale
-
-with obj_path.open("w", encoding="utf-8") as obj_file:
-    obj_file.write(f"# Exported from {usd_path}\n")
-    obj_file.write("# X/Y centered and min-Z aligned for Genesis table cloth.\n")
-    for vx, vy, vz in vertices:
-        obj_file.write(f"v {vx:.9f} {vy:.9f} {vz:.9f}\n")
-    for a, b, c in faces:
-        obj_file.write(f"f {a} {b} {c}\n")
-
-print(
-    "exported_dex_tshirt_obj "
-    f"vertices={len(vertices)} faces={len(faces)} "
-    f"span={np.ptp(vertices, axis=0).tolist()}"
-)
-'''
-    command = [str(ISAACSIM_PYTHON), "-c", export_script, str(usd_path), str(obj_path), str(scale)]
+    command = [
+        str(ISAACSIM_PYTHON),
+        str(DEX_TSHIRT_EXPORTER),
+        "--source-usd",
+        str(usd_path),
+        "--output-obj",
+        str(obj_path),
+        "--scale",
+        str(scale),
+    ]
     subprocess.run(command, check=True)
     return obj_path
+
+
+def resolve_tshirt_obj(args):
+    shirt_obj = Path(args.shirt_obj).expanduser().resolve()
+    if args.refresh_shirt_asset:
+        return export_tshirt_usd_to_obj(args.shirt_usd, shirt_obj, args.shirt_scale)
+    if not shirt_obj.is_file():
+        raise FileNotFoundError(
+            f"T-shirt OBJ asset does not exist: {shirt_obj}. "
+            "Run with --refresh-shirt-asset to regenerate it from --shirt-usd."
+        )
+    return shirt_obj
 
 
 def make_scene(args, shirt_mesh_path, robot_urdf_path):
@@ -434,7 +399,7 @@ def main():
     args = parse_args()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    shirt_mesh_path = export_tshirt_usd_to_obj(args.shirt_usd, output_dir / args.mesh_name, args.shirt_scale)
+    shirt_mesh_path = resolve_tshirt_obj(args)
     robot_urdf_path = make_piper_urdf(output_dir / "piper_x_dualarm_genesis.urdf")
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, logging_level="info")

@@ -108,13 +108,18 @@ Do NOT ask when:
     --output-dir recordings/ipc_dual_piperx_shirt_lift_ipc_y_grip
   ```
 
-- The demo exports the DexGarmentLab short-sleeve T-shirt USD from
+- The demo uses the checked-in DexGarmentLab short-sleeve T-shirt OBJ asset at
+  `genesis/assets/meshes/garments/dexgarmentlab_short_sleeve_tshirt.obj`. The
+  asset is generated from
   `/home/horizon/DexGarmentLab/Assets/Garment/Tops/NoCollar_Ssleeve_FrontClose/TNSC_T_Shirt_Short_Sleeve/TNSC_T_Shirt_Short_Sleeve_obj.usd`
-  to an OBJ in the recording output directory before adding it to Genesis. The
-  local Genesis venv does not provide `pxr`, so the exporter intentionally runs
-  `/home/horizon/isaacsim_env/bin/python`. It preserves the USD mesh topology,
-  centers X/Y, min-Z aligns it for the tabletop, and applies the Isaac demo's
-  short-sleeve garment scale of `0.55`.
+  with `examples/IPC_Solver/export_dexgarmentlab_tshirt_asset.py`. The local
+  Genesis venv does not provide `pxr`, so run the exporter with
+  `/home/horizon/isaacsim_env/bin/python`. The exporter triangulates all USD
+  mesh prim faces, applies each prim's local-to-world transform, centers X/Y,
+  min-Z aligns the garment for the tabletop, and applies the Isaac demo's
+  short-sleeve garment scale of `0.55`. The demo defaults to the checked-in OBJ;
+  use `--refresh-shirt-asset` only when intentionally regenerating it from the
+  DexGarmentLab USD.
 - Do not use hidden particle attachment in the Genesis IPC shirt lift demo.
   The old PBD path fixed/overrode selected particles with `fix_particles_*` or
   `set_particles_pos()`, which made lift reliable but was not the same behavior

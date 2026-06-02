@@ -28,6 +28,29 @@ Beware only Linux/Windows x86 CPU & Nvidia GPU is supported for now.
    ```
     Expected: Interactive Franka Panda robot manipulation and manipulates two pieces of cloths
 
+1. **Scripted T-shirt grasp/lift with IPC contact:**
+   ```bash
+   python examples/IPC_Solver/ipc_dual_piperx_shirt_lift.py --hide-piper --record
+   ```
+   Expected: Standalone IPC-coupled parallel grippers grasp the middle of a
+   DexGarmentLab short-sleeve T-shirt mesh, lift, shake, release, regrasp close
+   to the table, and lift/release again. The default mesh is the repo-local
+   asset:
+   `genesis/assets/meshes/garments/dexgarmentlab_short_sleeve_tshirt.obj`.
+
+   To regenerate that OBJ from the local DexGarmentLab USD asset, use Isaac
+   Sim's Python because the Genesis venv does not provide `pxr`:
+
+   ```bash
+   /home/horizon/isaacsim_env/bin/python \
+     examples/IPC_Solver/export_dexgarmentlab_tshirt_asset.py
+   ```
+
+   The exporter reads
+   `/home/horizon/DexGarmentLab/Assets/Garment/Tops/NoCollar_Ssleeve_FrontClose/TNSC_T_Shirt_Short_Sleeve/TNSC_T_Shirt_Short_Sleeve_obj.usd`,
+   triangulates all USD mesh prim faces, applies each prim's local-to-world
+   transform, centers X/Y, min-Z aligns the garment, and applies uniform scale
+   `0.55`.
 
 **Verification:**
 - No interpenetration between objects during contact
