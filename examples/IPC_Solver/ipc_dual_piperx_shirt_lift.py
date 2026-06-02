@@ -1,5 +1,5 @@
 import argparse
-import os
+import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -8,108 +8,85 @@ import numpy as np
 import genesis as gs
 
 
-PIPER_DUAL_URDF = "/home/horizon/newton_cloth/piper_x_description_dualarm.urdf"
+PIPER_DUAL_URDF = Path("/home/horizon/newton_cloth/piper_x_description_dualarm.urdf")
 
 LEFT_ARM_DOFS = [0, 2, 4, 6, 8, 10]
 RIGHT_ARM_DOFS = [1, 3, 5, 7, 9, 11]
+ALL_ARM_DOFS = LEFT_ARM_DOFS + RIGHT_ARM_DOFS
 LEFT_GRIPPER_DOFS = [12, 13]
 RIGHT_GRIPPER_DOFS = [14, 15]
-ALL_ARM_DOFS = LEFT_ARM_DOFS + RIGHT_ARM_DOFS
 ALL_GRIPPER_DOFS = LEFT_GRIPPER_DOFS + RIGHT_GRIPPER_DOFS
 ALL_CONTROL_DOFS = ALL_ARM_DOFS + ALL_GRIPPER_DOFS
 
-OPEN_GRIPPER = np.array([0.045, -0.045, 0.045, -0.045], dtype=np.float32)
-CLOSED_GRIPPER = np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+OPEN_GRIPPER = np.array([0.035, -0.035, 0.035, -0.035], dtype=np.float32)
 
 TABLE_CENTER = np.array([0.0, -0.48, 0.065], dtype=np.float32)
 TABLE_SIZE = np.array([0.82, 0.72, 0.13], dtype=np.float32)
 TABLE_TOP_Z = TABLE_CENTER[2] + TABLE_SIZE[2] * 0.5
 SHIRT_CENTER = np.array([0.0, -0.48, TABLE_TOP_Z + 0.010], dtype=np.float32)
+ROBOT_ROOT_POS = (0.0, -0.86, 0.0)
+GRIPPER_PAIR_XS = (-0.08, 0.08)
+GRIPPER_START_Y = SHIRT_CENTER[1] - 0.26
+GRIPPER_CONTACT_Y = SHIRT_CENTER[1] - 0.02
+GRIPPER_PUSH_Y = SHIRT_CENTER[1] + 0.07
+FINGER_SIZE = np.array([0.026, 0.012, 0.080], dtype=np.float32)
+FINGER_HIGH_Z = TABLE_TOP_Z + 0.22
+FINGER_CONTACT_Z = TABLE_TOP_Z + FINGER_SIZE[2] * 0.5 + 0.001
+FINGER_NEAR_TABLE_Z = TABLE_TOP_Z + FINGER_SIZE[2] * 0.5 + 0.0002
+FINGER_LIFT_Z = TABLE_TOP_Z + 0.36
+SHAKE_X_OFFSET = 0.025
+OPEN_FINGER_GAP = 0.075
+CLOSED_FINGER_GAP = 0.0005
+DEX_TSHIRT_USD = Path(
+    "/home/horizon/DexGarmentLab/Assets/Garment/Tops/"
+    "NoCollar_Ssleeve_FrontClose/TNSC_T_Shirt_Short_Sleeve/"
+    "TNSC_T_Shirt_Short_Sleeve_obj.usd"
+)
+ISAACSIM_PYTHON = Path("/home/horizon/isaacsim_env/bin/python")
+SHIRT_COLOR = (1.0, 0.86, 0.08, 1.0)
+GENESIS_IPC_CLOTH_KWARGS = {
+    "E": 6e4,
+    "nu": 0.49,
+    "rho": 200,
+    "thickness": 0.0002,
+    "bending_stiffness": 10.0,
+    "friction_mu": 2.0,
+}
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Dual Piper-X scripted IPC shirt grasp/lift demo.")
+    parser = argparse.ArgumentParser(description="Scripted Genesis shirt grasp/lift demo.")
     parser.add_argument("--vis", action="store_true", default=False, help="Show the Genesis viewer.")
     parser.add_argument("--record", action="store_true", default=False, help="Record the center camera MP4.")
     parser.add_argument("--output-dir", default="recordings/ipc_dual_piperx_shirt_lift")
     parser.add_argument("--video-name", default="ipc_dual_piperx_shirt_lift.mp4")
-    parser.add_argument("--mesh-name", default="genesis_short_sleeve_shirt.obj")
+    parser.add_argument("--mesh-name", default="dex_short_sleeve_tshirt.obj")
+    parser.add_argument("--shirt-usd", type=Path, default=DEX_TSHIRT_USD)
+    parser.add_argument("--hide-piper", action="store_true", default=False, help="Hide the Piper-X arm visuals.")
+    parser.add_argument(
+        "--shirt-scale",
+        type=float,
+        default=0.55,
+        help="Uniform scale applied to the DexGarmentLab T-shirt USD mesh.",
+    )
     parser.add_argument("--horizon-scale", type=float, default=1.0, help="Scale scripted phase lengths for smoke tests.")
-    parser.add_argument(
-        "--cloth-mode",
-        default="pbd",
-        choices=["pbd", "ipc"],
-        help="Use PBD particle attachment for verified lift, or IPC contact-only for ablations.",
-    )
-    parser.add_argument(
-        "--coup-type",
-        default="two_way_soft_constraint",
-        choices=["two_way_soft_constraint", "external_articulation"],
-        help="IPC rigid/FEM coupling mode for the Piper articulation.",
-    )
     parser.add_argument("--no-ipc", action="store_true", default=False, help="Disable IPC contacts for ablation.")
-    parser.add_argument("--hide-piper", action="store_true", default=False, help="Skip the Piper URDF import for fast cloth verification.")
     parser.add_argument("--cpu", action="store_true", default=False, help="Force Genesis CPU backend.")
     return parser.parse_args()
 
 
-def make_short_sleeve_shirt_obj(path):
+def make_piper_urdf(path):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if not PIPER_DUAL_URDF.is_file():
+        raise FileNotFoundError(f"Piper-X dual-arm URDF does not exist: {PIPER_DUAL_URDF}")
 
-    xs = np.linspace(-0.34, 0.34, 35)
-    ys = np.linspace(-0.25, 0.22, 25)
-    vertices = []
-    vertex_by_grid = {}
-    faces = []
-
-    def inside_shirt(x, y):
-        in_torso = -0.17 <= x <= 0.17 and -0.25 <= y <= 0.17
-        in_left_sleeve = -0.34 <= x <= -0.17 and 0.00 <= y <= 0.16
-        in_right_sleeve = 0.17 <= x <= 0.34 and 0.00 <= y <= 0.16
-        in_neck_notch = (x / 0.070) ** 2 + ((y - 0.18) / 0.055) ** 2 < 1.0
-        return (in_torso or in_left_sleeve or in_right_sleeve) and not in_neck_notch
-
-    def vertex_index(i, j):
-        key = (i, j)
-        if key not in vertex_by_grid:
-            vertex_by_grid[key] = len(vertices) + 1
-            vertices.append((xs[i], ys[j], 0.0))
-        return vertex_by_grid[key]
-
-    for i in range(len(xs) - 1):
-        for j in range(len(ys) - 1):
-            cell_x = 0.5 * (xs[i] + xs[i + 1])
-            cell_y = 0.5 * (ys[j] + ys[j + 1])
-            if inside_shirt(cell_x, cell_y):
-                v00 = vertex_index(i, j)
-                v10 = vertex_index(i + 1, j)
-                v11 = vertex_index(i + 1, j + 1)
-                v01 = vertex_index(i, j + 1)
-                faces.append((v00, v10, v11))
-                faces.append((v00, v11, v01))
-
-    with path.open("w", encoding="utf-8") as f:
-        f.write("# Generated IPC shell mesh for the dual Piper-X Genesis shirt lift demo.\n")
-        for vx, vy, vz in vertices:
-            f.write(f"v {vx:.6f} {vy:.6f} {vz:.6f}\n")
-        for a, b, c in faces:
-            f.write(f"f {a} {b} {c}\n")
-
-    return path
-
-
-def make_ipc_piper_urdf(path):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    source_root = Path(PIPER_DUAL_URDF).parent
+    source_root = PIPER_DUAL_URDF.parent
     tree = ET.parse(PIPER_DUAL_URDF)
     root = tree.getroot()
-
     for mesh in root.findall(".//mesh"):
         filename = mesh.attrib.get("filename")
-        if filename and not filename.startswith("/"):
+        if filename and not Path(filename).is_absolute():
             mesh.set("filename", str(source_root / filename))
 
     finger_collision_specs = {
@@ -143,11 +120,103 @@ def set_robot_init_qpos(robot, qpos):
         joint._init_qpos = np.array(qpos[start:stop], dtype=np.float32, copy=True)
 
 
+def export_tshirt_usd_to_obj(usd_path, obj_path, scale):
+    usd_path = Path(usd_path).expanduser().resolve()
+    obj_path = Path(obj_path)
+    obj_path.parent.mkdir(parents=True, exist_ok=True)
+    if not usd_path.is_file():
+        raise FileNotFoundError(f"DexGarmentLab T-shirt USD does not exist: {usd_path}")
+    if not ISAACSIM_PYTHON.is_file():
+        raise FileNotFoundError(f"Isaac Sim Python with pxr is missing: {ISAACSIM_PYTHON}")
+
+    export_script = r'''
+from pathlib import Path
+import sys
+
+import numpy as np
+from pxr import Gf, Usd, UsdGeom
+
+usd_path = Path(sys.argv[1])
+obj_path = Path(sys.argv[2])
+scale = float(sys.argv[3])
+
+stage = Usd.Stage.Open(str(usd_path))
+if stage is None:
+    raise RuntimeError(f"Could not open USD stage: {usd_path}")
+
+vertices_by_mesh = []
+faces = []
+vertex_offset = 0
+for prim in stage.Traverse():
+    if not prim.IsA(UsdGeom.Mesh):
+        continue
+    mesh = UsdGeom.Mesh(prim)
+    points = mesh.GetPointsAttr().Get()
+    counts = mesh.GetFaceVertexCountsAttr().Get()
+    indices = mesh.GetFaceVertexIndicesAttr().Get()
+    if not points or not counts or not indices:
+        continue
+    xform = UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(
+        Usd.TimeCode.Default()
+    )
+    mesh_vertices = np.array(
+        [
+            tuple(xform.Transform(Gf.Vec3d(float(point[0]), float(point[1]), float(point[2]))))
+            for point in points
+        ],
+        dtype=np.float64,
+    )
+    cursor = 0
+    for count in counts:
+        face_indices = list(indices[cursor : cursor + count])
+        cursor += count
+        for i in range(1, count - 1):
+            faces.append(
+                (
+                    vertex_offset + face_indices[0] + 1,
+                    vertex_offset + face_indices[i] + 1,
+                    vertex_offset + face_indices[i + 1] + 1,
+                )
+            )
+    vertices_by_mesh.append(mesh_vertices)
+    vertex_offset += len(mesh_vertices)
+
+if not vertices_by_mesh:
+    raise RuntimeError(f"No mesh prims found in USD stage: {usd_path}")
+
+vertices = np.concatenate(vertices_by_mesh, axis=0)
+local_min = vertices.min(axis=0)
+local_max = vertices.max(axis=0)
+local_center = 0.5 * (local_min + local_max)
+vertices[:, 0] = vertices[:, 0] - local_center[0]
+vertices[:, 1] = vertices[:, 1] - local_center[1]
+vertices[:, 2] = vertices[:, 2] - local_min[2]
+vertices *= scale
+
+with obj_path.open("w", encoding="utf-8") as obj_file:
+    obj_file.write(f"# Exported from {usd_path}\n")
+    obj_file.write("# X/Y centered and min-Z aligned for Genesis table cloth.\n")
+    for vx, vy, vz in vertices:
+        obj_file.write(f"v {vx:.9f} {vy:.9f} {vz:.9f}\n")
+    for a, b, c in faces:
+        obj_file.write(f"f {a} {b} {c}\n")
+
+print(
+    "exported_dex_tshirt_obj "
+    f"vertices={len(vertices)} faces={len(faces)} "
+    f"span={np.ptp(vertices, axis=0).tolist()}"
+)
+'''
+    command = [str(ISAACSIM_PYTHON), "-c", export_script, str(usd_path), str(obj_path), str(scale)]
+    subprocess.run(command, check=True)
+    return obj_path
+
+
 def make_scene(args, shirt_mesh_path, robot_urdf_path):
-    coupler_options = None
-    use_ipc = args.cloth_mode == "ipc" and not args.no_ipc
-    if use_ipc:
-        coupler_options = gs.options.IPCCouplerOptions(
+    coupler_options = (
+        None
+        if args.no_ipc
+        else gs.options.IPCCouplerOptions(
             constraint_strength_translation=100.0,
             constraint_strength_rotation=100.0,
             n_linesearch_iterations=8,
@@ -160,13 +229,13 @@ def make_scene(args, shirt_mesh_path, robot_urdf_path):
             contact_d_hat=0.001,
             contact_resistance=1e7,
         )
+    )
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=0.01, substeps=1, gravity=(0, 0, -9.81)),
+        sim_options=gs.options.SimOptions(dt=0.01, substeps=2, gravity=(0.0, 0.0, -9.81)),
         coupler_options=coupler_options,
-        pbd_options=gs.options.PBDOptions(particle_size=0.01),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(0.15, -1.55, 0.78),
+            camera_pos=(0.16, -1.30, 0.72),
             camera_lookat=(0.0, -0.48, 0.13),
             camera_fov=42,
             max_FPS=60,
@@ -176,19 +245,12 @@ def make_scene(args, shirt_mesh_path, robot_urdf_path):
         renderer=gs.renderers.Rasterizer(),
     )
 
-    table_material = gs.materials.Rigid(coup_type="ipc_only") if use_ipc else gs.materials.Rigid()
-    shirt_material = (
-        gs.materials.FEM.Cloth(
-            rho=200.0,
-            thickness=0.0015,
-            E=1.0e4,
-            nu=0.30,
-            bending_stiffness=10.0,
-            friction_mu=1.0,
-        )
-        if use_ipc
-        else gs.materials.PBD.Cloth()
+    table_material = (
+        gs.materials.Rigid(coup_type="ipc_only", coup_friction=0.4)
+        if not args.no_ipc
+        else gs.materials.Rigid(friction=0.7)
     )
+    shirt_material = gs.materials.FEM.Cloth(**GENESIS_IPC_CLOTH_KWARGS)
     table = scene.add_entity(
         morph=gs.morphs.Box(pos=tuple(TABLE_CENTER), size=tuple(TABLE_SIZE), fixed=True),
         material=table_material,
@@ -197,13 +259,14 @@ def make_scene(args, shirt_mesh_path, robot_urdf_path):
     shirt = scene.add_entity(
         morph=gs.morphs.Mesh(file=str(shirt_mesh_path), pos=tuple(SHIRT_CENTER), euler=(0.0, 0.0, 0.0)),
         material=shirt_material,
-        surface=gs.surfaces.Default(color=(1.0, 0.86, 0.08, 1.0)),
+        surface=gs.surfaces.Default(color=SHIRT_COLOR),
     )
     robot = None
     if not args.hide_piper:
         robot = scene.add_entity(
             morph=gs.morphs.URDF(
                 file=str(robot_urdf_path),
+                pos=ROBOT_ROOT_POS,
                 fixed=True,
                 merge_fixed_links=False,
                 collision=True,
@@ -211,32 +274,48 @@ def make_scene(args, shirt_mesh_path, robot_urdf_path):
             ),
             material=gs.materials.Rigid(needs_coup=False),
         )
-    finger_material = gs.materials.Rigid(coup_type="two_way_soft_constraint", coup_friction=1.0) if use_ipc else gs.materials.Rigid()
-    finger_surface = gs.surfaces.Default(color=(0.08, 0.08, 0.08, 1.0))
-    finger_size = (0.012, 0.105, 0.060)
-    finger_proxies = [
-        scene.add_entity(gs.morphs.Box(pos=(-0.205, -0.48, 0.20), size=finger_size, fixed=not use_ipc), finger_material, finger_surface),
-        scene.add_entity(gs.morphs.Box(pos=(-0.115, -0.48, 0.20), size=finger_size, fixed=not use_ipc), finger_material, finger_surface),
-        scene.add_entity(gs.morphs.Box(pos=(0.115, -0.48, 0.20), size=finger_size, fixed=not use_ipc), finger_material, finger_surface),
-        scene.add_entity(gs.morphs.Box(pos=(0.205, -0.48, 0.20), size=finger_size, fixed=not use_ipc), finger_material, finger_surface),
-    ]
+
+    gripper_material = (
+        gs.materials.Rigid(
+            rho=1500.0,
+            friction=1.5,
+            coup_type="two_way_soft_constraint",
+            coup_friction=4.0,
+            sdf_cell_size=0.003,
+        )
+        if not args.no_ipc
+        else gs.materials.Rigid(rho=1500.0, friction=1.5)
+    )
+    finger_proxies = []
+    for finger_name, finger_pos in proxy_state(GRIPPER_START_Y, FINGER_HIGH_Z, OPEN_FINGER_GAP).items():
+        finger = scene.add_entity(
+            morph=gs.morphs.Box(
+                pos=tuple(finger_pos),
+                size=tuple(FINGER_SIZE),
+                fixed=False,
+            ),
+            material=gripper_material,
+            surface=gs.surfaces.Default(color=(0.05, 0.08, 0.12, 1.0)),
+        )
+        finger_proxies.append((finger_name, finger))
+
     center_cam = scene.add_camera(
         res=(960, 540),
-        pos=(0.12, -1.24, 0.62),
-        lookat=(0.0, -0.48, 0.15),
-        fov=42,
+        pos=(0.15, -1.34, 0.82),
+        lookat=(0.0, -0.44, 0.30),
+        fov=52,
         GUI=False,
     )
     left_cam = scene.add_camera(
         res=(640, 480),
-        pos=(-0.46, -0.92, 0.47),
+        pos=(-0.46, -1.02, 0.50),
         lookat=(-0.12, -0.48, 0.16),
         fov=50,
         GUI=False,
     )
     right_cam = scene.add_camera(
         res=(640, 480),
-        pos=(0.46, -0.92, 0.47),
+        pos=(0.46, -1.02, 0.50),
         lookat=(0.12, -0.48, 0.16),
         fov=50,
         GUI=False,
@@ -244,59 +323,56 @@ def make_scene(args, shirt_mesh_path, robot_urdf_path):
     return scene, table, shirt, robot, finger_proxies, (center_cam, left_cam, right_cam)
 
 
-def qpos_with_gripper(qpos, gripper):
-    qpos_with_target = np.asarray(qpos, dtype=np.float32).copy()
-    qpos_with_target[ALL_GRIPPER_DOFS] = gripper
-    return qpos_with_target
-
-
-def solve_dual_ik(robot, left_pos, right_pos, init_qpos):
-    left_link6 = robot.get_link("left_link6")
-    right_link6 = robot.get_link("right_link6")
-    qpos = robot.inverse_kinematics_multilink(
-        links=[left_link6, right_link6],
-        poss=[np.array(left_pos, gs.np_float), np.array(right_pos, gs.np_float)],
-        dofs_idx_local=ALL_ARM_DOFS,
-        init_qpos=init_qpos,
-        respect_joint_limit=True,
-        max_samples=12,
-        max_solver_iters=80,
-        damping=0.02,
-        pos_mask=[True, True, True],
-        rot_mask=[False, False, False],
-    )
-    return qpos_with_gripper(qpos, init_qpos[ALL_GRIPPER_DOFS])
-
-
-def interpolate_qpos(start_qpos, end_qpos, steps):
-    for alpha in np.linspace(0.0, 1.0, steps, endpoint=True):
-        yield (1.0 - alpha) * start_qpos + alpha * end_qpos
-
-
-def proxy_state(left_x, right_x, z, gap):
-    return np.array([left_x, right_x, z, gap], dtype=np.float32)
+def proxy_state(y, z, gap):
+    state = {}
+    center_offset = 0.5 * float(gap) + 0.5 * float(FINGER_SIZE[1])
+    for pair_index, pair_x in enumerate(GRIPPER_PAIR_XS):
+        state[f"pair{pair_index}_front"] = np.array([pair_x, y - center_offset, z], dtype=np.float32)
+        state[f"pair{pair_index}_back"] = np.array([pair_x, y + center_offset, z], dtype=np.float32)
+    return state
 
 
 def interpolate_proxy_state(start_state, end_state, steps):
     for alpha in np.linspace(0.0, 1.0, steps, endpoint=True):
-        yield (1.0 - alpha) * start_state + alpha * end_state
+        yield {
+            name: (1.0 - alpha) * start_state[name] + alpha * end_state[name]
+            for name in start_state
+        }
 
 
-def set_finger_proxies(finger_proxies, state):
-    left_x, right_x, z, gap = state
-    y = SHIRT_CENTER[1]
-    x_positions = (left_x - gap * 0.5, left_x + gap * 0.5, right_x - gap * 0.5, right_x + gap * 0.5)
-    for finger, x in zip(finger_proxies, x_positions, strict=True):
-        finger.set_pos((float(x), float(y), float(z)))
+def offset_proxy_state(state, offset):
+    offset_array = np.array(offset, dtype=np.float32)
+    return {name: pos + offset_array for name, pos in state.items()}
 
 
-def proxy_inner_anchors(state):
-    left_x, right_x, z, gap = state
-    y = SHIRT_CENTER[1]
-    return {
-        "left": np.array([left_x + gap * 0.5, y, z], dtype=np.float32),
-        "right": np.array([right_x - gap * 0.5, y, z], dtype=np.float32),
-    }
+def shake_proxy_states(base_state, amplitude, cycles, steps_per_half_cycle):
+    previous_state = base_state
+    for cycle_index in range(cycles * 2):
+        direction = -1.0 if cycle_index % 2 else 1.0
+        target_state = offset_proxy_state(base_state, (direction * amplitude, 0.0, 0.0))
+        yield from interpolate_proxy_state(previous_state, target_state, steps_per_half_cycle)
+        previous_state = target_state
+    yield from interpolate_proxy_state(previous_state, base_state, steps_per_half_cycle)
+
+
+def initialize_finger_proxies(finger_proxies, initial_state):
+    for finger_name, finger in finger_proxies:
+        target_pos = initial_state[finger_name]
+        finger.set_qpos(np.array([*target_pos, 1.0, 0.0, 0.0, 0.0], dtype=np.float32))
+        finger.set_dofs_kp(np.array([8000.0, 8000.0, 8000.0, 900.0, 900.0, 900.0], dtype=np.float32))
+        finger.set_dofs_kv(np.array([220.0, 220.0, 220.0, 80.0, 80.0, 80.0], dtype=np.float32))
+        finger.set_dofs_force_range(
+            np.array([-450.0, -450.0, -450.0, -60.0, -60.0, -60.0], dtype=np.float32),
+            np.array([450.0, 450.0, 450.0, 60.0, 60.0, 60.0], dtype=np.float32),
+        )
+        finger.control_dofs_position(target_pos, dofs_idx_local=slice(0, 3))
+        finger.control_dofs_position(np.zeros(3, dtype=np.float32), dofs_idx_local=slice(3, 6))
+
+
+def drive_finger_proxies(finger_proxies, target_state):
+    for finger_name, finger in finger_proxies:
+        finger.control_dofs_position(target_state[finger_name], dofs_idx_local=slice(0, 3))
+        finger.control_dofs_position(np.zeros(3, dtype=np.float32), dofs_idx_local=slice(3, 6))
 
 
 def cloth_stats(shirt):
@@ -319,47 +395,6 @@ def cloth_stats(shirt):
     }
 
 
-def select_particles_near(shirt, xy, count):
-    if hasattr(shirt, "_particles"):
-        positions = np.asarray(shirt._particles, dtype=np.float32)
-    else:
-        positions = shirt.init_positions.detach().cpu().numpy()
-    distances = np.linalg.norm(positions[:, :2] - np.asarray(xy, dtype=np.float32), axis=1)
-    return np.argsort(distances)[:count].astype(np.int32).tolist()
-
-
-def attach_shirt_to_finger_proxies(shirt, finger_proxies):
-    left_particles = select_particles_near(shirt, (-0.16, SHIRT_CENTER[1]), 20)
-    right_particles = select_particles_near(shirt, (0.16, SHIRT_CENTER[1]), 20)
-    current_pos = shirt.get_particles_pos().detach().cpu().numpy()
-    anchors = proxy_inner_anchors(proxy_state(-0.16, 0.16, TABLE_TOP_Z + 0.024, 0.018))
-    attached_patches = {
-        "left": {
-            "indices": left_particles,
-            "offsets": current_pos[left_particles] - anchors["left"],
-        },
-        "right": {
-            "indices": right_particles,
-            "offsets": current_pos[right_particles] - anchors["right"],
-        },
-    }
-    print(
-        "attached shirt particles: "
-        f"left_count={len(left_particles)} left_link={finger_proxies[1].link_start} "
-        f"right_count={len(right_particles)} right_link={finger_proxies[2].link_start}"
-    )
-    return attached_patches
-
-
-def drive_attached_particles(shirt, proxy_target, attached_patches):
-    if not attached_patches:
-        return
-    anchors = proxy_inner_anchors(proxy_target)
-    for side, patch in attached_patches.items():
-        target_positions = anchors[side] + patch["offsets"]
-        shirt.set_particles_pos(target_positions, particles_idx_local=patch["indices"])
-
-
 def record_frame(cameras, record):
     if record:
         for camera in cameras:
@@ -373,25 +408,25 @@ def step_phase(
     finger_proxies,
     cameras,
     phase,
-    qpos_targets,
     proxy_targets,
     record,
-    attached_patches=None,
+    neutral_qpos=None,
     log_interval=20,
 ):
-    for i, (qpos, proxy_target) in enumerate(zip(qpos_targets, proxy_targets, strict=True)):
-        set_finger_proxies(finger_proxies, proxy_target)
-        drive_attached_particles(shirt, proxy_target, attached_patches)
-        if robot is not None:
-            robot.control_dofs_position(qpos[ALL_CONTROL_DOFS], ALL_CONTROL_DOFS)
+    for i, proxy_target in enumerate(proxy_targets):
+        if robot is not None and neutral_qpos is not None:
+            robot.control_dofs_position(neutral_qpos[ALL_CONTROL_DOFS], ALL_CONTROL_DOFS)
+        drive_finger_proxies(finger_proxies, proxy_target)
         scene.step()
         record_frame(cameras, record)
         if i == 0 or (i + 1) % log_interval == 0:
             stats = cloth_stats(shirt)
+            proxy_z = float(np.mean([target[2] for target in proxy_target.values()]))
             print(
                 f"[{phase:>8s}] step={i + 1:04d} "
                 f"centroid=({stats['centroid'][0]:+.3f}, {stats['centroid'][1]:+.3f}, {stats['centroid'][2]:+.3f}) "
-                f"z_min={stats['min_z']:.3f} z_max={stats['max_z']:.3f} sentinel={stats['sentinel_count']}"
+                f"z_min={stats['min_z']:.3f} z_max={stats['max_z']:.3f} "
+                f"finger_z={proxy_z:.3f} sentinel={stats['sentinel_count']}"
             )
 
 
@@ -399,8 +434,8 @@ def main():
     args = parse_args()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    shirt_mesh_path = make_short_sleeve_shirt_obj(output_dir / args.mesh_name)
-    robot_urdf_path = make_ipc_piper_urdf(output_dir / "piper_x_dualarm_ipc.urdf")
+    shirt_mesh_path = export_tshirt_usd_to_obj(args.shirt_usd, output_dir / args.mesh_name, args.shirt_scale)
+    robot_urdf_path = make_piper_urdf(output_dir / "piper_x_dualarm_genesis.urdf")
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, logging_level="info")
     scene, _, shirt, robot, finger_proxies, cameras = make_scene(args, shirt_mesh_path, robot_urdf_path)
@@ -422,42 +457,36 @@ def main():
             ALL_CONTROL_DOFS,
         )
 
-    approach_qpos = np.array(
-        [
-            -1.8495,
-            0.6854,
-            1.9616,
-            0.9100,
-            -1.3592,
-            -0.4323,
-            -0.2634,
-            0.1435,
-            0.8933,
-            -0.2047,
-            0.0,
-            0.0,
-            0.045,
-            -0.045,
-            0.045,
-            -0.045,
-        ],
-        dtype=np.float32,
-    )
-    lower_qpos = approach_qpos.copy()
-    closed_qpos = qpos_with_gripper(lower_qpos, CLOSED_GRIPPER)
-    lift_qpos = closed_qpos.copy()
-    lift_qpos[[2, 3]] = np.array([1.35, 1.35], dtype=np.float32)
-    lift_qpos[[4, 5]] = np.array([-1.10, -1.10], dtype=np.float32)
-    retreat_qpos = lift_qpos.copy()
-    retreat_qpos[[0, 1]] = np.array([-1.30, 1.30], dtype=np.float32)
+    high_open_proxy = proxy_state(GRIPPER_START_Y, FINGER_HIGH_Z, OPEN_FINGER_GAP)
+    approach_open_proxy = proxy_state(GRIPPER_CONTACT_Y, FINGER_HIGH_Z, OPEN_FINGER_GAP)
+    low_open_proxy = proxy_state(GRIPPER_CONTACT_Y, FINGER_CONTACT_Z, OPEN_FINGER_GAP)
+    low_closed_proxy = proxy_state(GRIPPER_CONTACT_Y, FINGER_CONTACT_Z, CLOSED_FINGER_GAP)
+    pushed_closed_proxy = proxy_state(GRIPPER_PUSH_Y, FINGER_CONTACT_Z, CLOSED_FINGER_GAP)
+    lift_proxy = proxy_state(GRIPPER_PUSH_Y, FINGER_LIFT_Z, CLOSED_FINGER_GAP)
+    release_proxy = proxy_state(GRIPPER_PUSH_Y, FINGER_LIFT_Z, OPEN_FINGER_GAP)
+    second_low_open_proxy = proxy_state(GRIPPER_PUSH_Y, FINGER_NEAR_TABLE_Z, OPEN_FINGER_GAP)
+    second_low_closed_proxy = proxy_state(GRIPPER_PUSH_Y, FINGER_NEAR_TABLE_Z, CLOSED_FINGER_GAP)
+    second_lift_proxy = proxy_state(GRIPPER_PUSH_Y, FINGER_LIFT_Z, CLOSED_FINGER_GAP)
+    second_release_proxy = proxy_state(GRIPPER_PUSH_Y, FINGER_LIFT_Z, OPEN_FINGER_GAP)
+    retreat_proxy = proxy_state(GRIPPER_START_Y, FINGER_LIFT_Z, OPEN_FINGER_GAP)
+    initialize_finger_proxies(finger_proxies, high_open_proxy)
 
     phase_steps = {
         "settle": max(1, int(40 * args.horizon_scale)),
-        "approach": max(2, int(70 * args.horizon_scale)),
+        "approach": max(2, int(60 * args.horizon_scale)),
         "lower": max(2, int(70 * args.horizon_scale)),
-        "close": max(2, int(50 * args.horizon_scale)),
+        "close": max(2, int(55 * args.horizon_scale)),
         "hold": max(1, int(35 * args.horizon_scale)),
-        "lift": max(2, int(90 * args.horizon_scale)),
+        "push": max(2, int(45 * args.horizon_scale)),
+        "lift": max(2, int(150 * args.horizon_scale)),
+        "high_hold": max(1, int(45 * args.horizon_scale)),
+        "shake": max(2, int(18 * args.horizon_scale)),
+        "release": max(2, int(35 * args.horizon_scale)),
+        "second_lower": max(2, int(85 * args.horizon_scale)),
+        "second_close": max(2, int(55 * args.horizon_scale)),
+        "second_hold": max(1, int(35 * args.horizon_scale)),
+        "second_lift": max(2, int(140 * args.horizon_scale)),
+        "second_release": max(2, int(35 * args.horizon_scale)),
         "retreat": max(2, int(45 * args.horizon_scale)),
     }
 
@@ -465,14 +494,7 @@ def main():
         for camera in cameras:
             camera.start_recording()
 
-    high_proxy = proxy_state(-0.16, 0.16, 0.32, 0.090)
-    low_open_proxy = proxy_state(-0.16, 0.16, TABLE_TOP_Z + 0.024, 0.090)
-    low_closed_proxy = proxy_state(-0.16, 0.16, TABLE_TOP_Z + 0.024, 0.018)
-    lift_proxy = proxy_state(-0.16, 0.16, 0.31, 0.018)
-    retreat_proxy = proxy_state(-0.22, 0.22, 0.31, 0.018)
-
     video_path = output_dir / args.video_name
-    attached_patches = None
     try:
         if robot is not None:
             robot.set_qpos(neutral_qpos)
@@ -483,9 +505,9 @@ def main():
             finger_proxies,
             cameras,
             "settle",
-            [neutral_qpos] * phase_steps["settle"],
-            [high_proxy] * phase_steps["settle"],
+            [high_open_proxy] * phase_steps["settle"],
             args.record,
+            neutral_qpos,
         )
         step_phase(
             scene,
@@ -494,9 +516,9 @@ def main():
             finger_proxies,
             cameras,
             "approach",
-            interpolate_qpos(neutral_qpos, approach_qpos, phase_steps["approach"]),
-            interpolate_proxy_state(high_proxy, high_proxy, phase_steps["approach"]),
+            interpolate_proxy_state(high_open_proxy, approach_open_proxy, phase_steps["approach"]),
             args.record,
+            neutral_qpos,
         )
         step_phase(
             scene,
@@ -505,9 +527,9 @@ def main():
             finger_proxies,
             cameras,
             "lower",
-            interpolate_qpos(approach_qpos, lower_qpos, phase_steps["lower"]),
-            interpolate_proxy_state(high_proxy, low_open_proxy, phase_steps["lower"]),
+            interpolate_proxy_state(approach_open_proxy, low_open_proxy, phase_steps["lower"]),
             args.record,
+            neutral_qpos,
         )
         step_phase(
             scene,
@@ -516,12 +538,10 @@ def main():
             finger_proxies,
             cameras,
             "close",
-            interpolate_qpos(lower_qpos, closed_qpos, phase_steps["close"]),
             interpolate_proxy_state(low_open_proxy, low_closed_proxy, phase_steps["close"]),
             args.record,
+            neutral_qpos,
         )
-        if args.cloth_mode == "pbd":
-            attached_patches = attach_shirt_to_finger_proxies(shirt, finger_proxies)
         step_phase(
             scene,
             robot,
@@ -529,10 +549,20 @@ def main():
             finger_proxies,
             cameras,
             "hold",
-            [closed_qpos] * phase_steps["hold"],
             [low_closed_proxy] * phase_steps["hold"],
             args.record,
-            attached_patches,
+            neutral_qpos,
+        )
+        step_phase(
+            scene,
+            robot,
+            shirt,
+            finger_proxies,
+            cameras,
+            "push",
+            interpolate_proxy_state(low_closed_proxy, pushed_closed_proxy, phase_steps["push"]),
+            args.record,
+            neutral_qpos,
         )
         step_phase(
             scene,
@@ -541,10 +571,97 @@ def main():
             finger_proxies,
             cameras,
             "lift",
-            interpolate_qpos(closed_qpos, lift_qpos, phase_steps["lift"]),
-            interpolate_proxy_state(low_closed_proxy, lift_proxy, phase_steps["lift"]),
+            interpolate_proxy_state(pushed_closed_proxy, lift_proxy, phase_steps["lift"]),
             args.record,
-            attached_patches,
+            neutral_qpos,
+        )
+        step_phase(
+            scene,
+            robot,
+            shirt,
+            finger_proxies,
+            cameras,
+            "hi_hold",
+            [lift_proxy] * phase_steps["high_hold"],
+            args.record,
+            neutral_qpos,
+        )
+        step_phase(
+            scene,
+            robot,
+            shirt,
+            finger_proxies,
+            cameras,
+            "shake",
+            shake_proxy_states(lift_proxy, SHAKE_X_OFFSET, 2, phase_steps["shake"]),
+            args.record,
+            neutral_qpos,
+        )
+        step_phase(
+            scene,
+            robot,
+            shirt,
+            finger_proxies,
+            cameras,
+            "release",
+            interpolate_proxy_state(lift_proxy, release_proxy, phase_steps["release"]),
+            args.record,
+            neutral_qpos,
+        )
+        step_phase(
+            scene,
+            robot,
+            shirt,
+            finger_proxies,
+            cameras,
+            "re_lower",
+            interpolate_proxy_state(release_proxy, second_low_open_proxy, phase_steps["second_lower"]),
+            args.record,
+            neutral_qpos,
+        )
+        step_phase(
+            scene,
+            robot,
+            shirt,
+            finger_proxies,
+            cameras,
+            "re_close",
+            interpolate_proxy_state(second_low_open_proxy, second_low_closed_proxy, phase_steps["second_close"]),
+            args.record,
+            neutral_qpos,
+        )
+        step_phase(
+            scene,
+            robot,
+            shirt,
+            finger_proxies,
+            cameras,
+            "re_hold",
+            [second_low_closed_proxy] * phase_steps["second_hold"],
+            args.record,
+            neutral_qpos,
+        )
+        step_phase(
+            scene,
+            robot,
+            shirt,
+            finger_proxies,
+            cameras,
+            "re_lift",
+            interpolate_proxy_state(second_low_closed_proxy, second_lift_proxy, phase_steps["second_lift"]),
+            args.record,
+            neutral_qpos,
+        )
+        step_phase(
+            scene,
+            robot,
+            shirt,
+            finger_proxies,
+            cameras,
+            "re_rel",
+            interpolate_proxy_state(second_lift_proxy, second_release_proxy, phase_steps["second_release"]),
+            args.record,
+            neutral_qpos,
         )
         step_phase(
             scene,
@@ -553,10 +670,9 @@ def main():
             finger_proxies,
             cameras,
             "retreat",
-            interpolate_qpos(lift_qpos, retreat_qpos, phase_steps["retreat"]),
-            interpolate_proxy_state(lift_proxy, retreat_proxy, phase_steps["retreat"]),
+            interpolate_proxy_state(second_release_proxy, retreat_proxy, phase_steps["retreat"]),
             args.record,
-            attached_patches,
+            neutral_qpos,
         )
     finally:
         if args.record:

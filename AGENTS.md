@@ -95,31 +95,54 @@ Do NOT ask when:
 
 ## Local Cloth Grasp Notes
 
-- The dual Piper-X shirt lift demo lives at
+- The scripted shirt lift demo lives at
   `examples/IPC_Solver/ipc_dual_piperx_shirt_lift.py`.
-  The verified fast path is:
+  The current verified path uses IPC FEM cloth, standalone IPC-coupled rigid
+  parallel-gripper boxes as the actual contact driver, a table, three cameras,
+  and an imported DexGarmentLab T-shirt mesh. The Piper-X arms can be visible,
+  but they are held stationary while the standalone grippers test grasping:
 
   ```bash
   .venv/bin/python examples/IPC_Solver/ipc_dual_piperx_shirt_lift.py \
-    --hide-piper --horizon-scale 0.5 --record
+    --record --hide-piper \
+    --output-dir recordings/ipc_dual_piperx_shirt_lift_ipc_y_grip
   ```
 
+- The demo exports the DexGarmentLab short-sleeve T-shirt USD from
+  `/home/horizon/DexGarmentLab/Assets/Garment/Tops/NoCollar_Ssleeve_FrontClose/TNSC_T_Shirt_Short_Sleeve/TNSC_T_Shirt_Short_Sleeve_obj.usd`
+  to an OBJ in the recording output directory before adding it to Genesis. The
+  local Genesis venv does not provide `pxr`, so the exporter intentionally runs
+  `/home/horizon/isaacsim_env/bin/python`. It preserves the USD mesh topology,
+  centers X/Y, min-Z aligns it for the tabletop, and applies the Isaac demo's
+  short-sleeve garment scale of `0.55`.
+- Do not use hidden particle attachment in the Genesis IPC shirt lift demo.
+  The old PBD path fixed/overrode selected particles with `fix_particles_*` or
+  `set_particles_pos()`, which made lift reliable but was not the same behavior
+  as Genesis' IPC teleop examples. The current demo has no attachment calls;
+  the shirt is moved only by IPC contact/friction against the rigid gripper
+  boxes.
+- The default CLI path still imports the Piper-X URDF for visual context, but
+  holds the arms at their neutral qpos and does not run an arm trajectory.
+  Genesis can warn about falling back to the legacy URDF parser for Piper DAE
+  meshes and filtering neutral self-collision geometry pairs; the local short
+  runtime check completed despite those warnings.
 - Genesis IPC cloth uses `gs.materials.FEM.Cloth` with OBJ shell meshes and
   `IPCCouplerOptions`; it does not expose the same vertex constraint API used by
   non-IPC FEM examples. `FEMEntity.set_vertex_constraints()` rejects IPCCoupler.
-- The local Piper-X URDF imports through Genesis' legacy URDF parser because
-  some DAE meshes are not decoded by the primary parser. Keep generated URDF
-  copies local to output directories and rewrite relative mesh paths to absolute
-  paths when copying the URDF outside `/home/horizon/newton_cloth`.
-- Raw Piper gripper collision meshes are not IPC-friendly at qpos0: closed
-  finger pairs can make the IPC world invalid. For scripted cloth lift, the demo
-  uses simple rigid box finger proxies and keeps the full Piper import as a
-  visual/controller reference.
-- PBD cloth attachment is the reliable verified lift path in this repo state.
-  Use `gs.materials.PBD.Cloth`, choose nearby particles, then call
-  `cloth.fix_particles_to_link(proxy.link_start, particles_idx_local=...)`.
-  After attachment, `get_particles_pos()` can contain sentinel positions near
-  `100` for inactive/attached particles; filter those when logging centroid or
-  height diagnostics.
-- PBD cloth should run on the GPU backend by default here. CPU PBD stepping was
-  too slow/hung before phase diagnostics in the local verification run.
+- The imported DexGarmentLab T-shirt mesh is not as clean as Genesis'
+  `IPC/grid20x20.obj` cloth. With teleop-style `thickness=0.001`, IPC rejected
+  it during world initialization because nearby shirt surface triangles were
+  closer than the effective shell thickness. Use `thickness=0.0002` for this
+  imported USD mesh unless the mesh is flattened/cleaned.
+- The contact-only IPC lift needs higher finger/cloth friction and a slower
+  lift than the baseline teleop grid scene. The verified run used
+  `friction_mu=2.0` on the FEM cloth, table `coup_friction=0.4`, gripper
+  `coup_type="two_way_soft_constraint"`, gripper `coup_friction=4.0`, and
+  front/back-closing gripper pairs with Piper-like `0.026 x 0.012 x 0.080 m`
+  box geometry. A side-closing setup and a `10 mm` closed gap only wrinkled the
+  shirt and slipped during lift.
+- The current scripted IPC sequence uses two gripper pairs near the shirt
+  middle (`x=-0.08` and `x=0.08`), lifts high, holds, shakes laterally, releases,
+  then descends open to a near-table clearance of `0.2 mm`, closes again, lifts,
+  and releases. The center camera should stay high/wide enough to frame
+  `FINGER_LIFT_Z = TABLE_TOP_Z + 0.36`.
