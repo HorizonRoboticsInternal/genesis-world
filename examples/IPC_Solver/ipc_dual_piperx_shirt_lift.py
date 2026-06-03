@@ -28,17 +28,21 @@ TABLE_CENTER = np.array([0.0, -0.48, 0.065], dtype=np.float32)
 TABLE_SIZE = np.array([1.64, 0.72, 0.13], dtype=np.float32)
 TABLE_TOP_Z = TABLE_CENTER[2] + TABLE_SIZE[2] * 0.5
 SHIRT_CENTER = np.array([0.0, -0.48, TABLE_TOP_Z + 0.010], dtype=np.float32)
-ROBOT_ROOT_POS = (-0.30, float(TABLE_CENTER[1] - TABLE_SIZE[1] * 0.5 - 0.02), 0.0)
+PIPER_SHOULDER_CENTER_Z_IN_ROOT = 0.123
+REAL_SHOULDER_CENTER_ABOVE_TABLE = 0.130
+ROBOT_ROOT_Z = TABLE_TOP_Z + REAL_SHOULDER_CENTER_ABOVE_TABLE - PIPER_SHOULDER_CENTER_Z_IN_ROOT
+ROBOT_ROOT_POS = (-0.30, float(TABLE_CENTER[1] - TABLE_SIZE[1] * 0.5 - 0.02), float(ROBOT_ROOT_Z))
 ROBOT_ROOT_EULER = (0.0, 0.0, 90.0)
 CFE_APPROACH_HEIGHT = 0.250
 CFE_FINGERTIP_CONTACT_HEIGHT = 0.220
 CFE_PUSH_DISTANCE = 0.200
 CFE_LIFT_HEIGHT = 0.340
+GENESIS_FINGERTIP_CONTACT_HEIGHT = TABLE_TOP_Z + 0.018
 PIPER_BASE_START_Y = TABLE_CENTER[1] - TABLE_SIZE[1] * 0.5 - 0.06
 PIPER_BASE_CONTACT_Y = SHIRT_CENTER[1]
 PIPER_BASE_PUSH_Y = SHIRT_CENTER[1] + CFE_PUSH_DISTANCE
 PIPER_BASE_HIGH_Z = CFE_APPROACH_HEIGHT
-PIPER_BASE_CONTACT_Z = CFE_FINGERTIP_CONTACT_HEIGHT
+PIPER_BASE_CONTACT_Z = GENESIS_FINGERTIP_CONTACT_HEIGHT
 PIPER_BASE_LIFT_Z = CFE_LIFT_HEIGHT
 PIPER_GRASP_BASE_XS = (-0.10, 0.10)
 PIPER_IK_LINKS = ("left_link7", "right_link8")
@@ -78,12 +82,16 @@ GRIPPER_FINGER_LINK8_COLLISION_CENTER = (
     -0.012 + GRIPPER_FINGER_COVER_CLOSING_SHIFT,
 )
 # Piper-X finger links are rotated relative to the gripper base; link-local Y is
-# the useful vertical finger length in Genesis, while link-local Z is the
-# closing-direction thickness. Keeping Z thin avoids IPC self-intersections.
-GENESIS_FINGER_COLLISION_BOX_SIZE = (0.026, 0.080, 0.012)
-GENESIS_LINK7_COLLISION_CENTER = (0.0, -0.046, -0.026)
-GENESIS_LINK8_COLLISION_CENTER = (0.0, 0.046, -0.026)
-PIPER_IK_LOCAL_POINTS = (GENESIS_LINK7_COLLISION_CENTER, GENESIS_LINK8_COLLISION_CENTER)
+# the useful finger length in Genesis, while link-local Z is the
+# closing-direction thickness. Keep the boxes thin enough to avoid closed-finger
+# self-intersections, similar to Panda's non-overlap fingertip pad boxes.
+GENESIS_FINGER_BODY_COLLISION_BOX_SIZE = (0.020, 0.060, 0.010)
+GENESIS_LINK7_BODY_COLLISION_CENTER = (0.0, -0.027, -0.018)
+GENESIS_LINK8_BODY_COLLISION_CENTER = (0.0, 0.027, -0.018)
+GENESIS_FINGER_COVER_COLLISION_BOX_SIZE = (0.044, 0.090, 0.010)
+GENESIS_LINK7_COVER_COLLISION_CENTER = GRIPPER_FINGER_LINK7_COLLISION_CENTER
+GENESIS_LINK8_COVER_COLLISION_CENTER = GRIPPER_FINGER_LINK8_COLLISION_CENTER
+PIPER_IK_LOCAL_POINTS = (GENESIS_LINK7_COVER_COLLISION_CENTER, GENESIS_LINK8_COVER_COLLISION_CENTER)
 GRIPPER_FINGER_LINK7_COVER_RPY = (0.0, math.pi, math.pi)
 GRIPPER_FINGER_LINK8_COVER_RPY = (0.0, math.pi, 0.0)
 PIPER_COUPLED_FINGER_LINKS = ("left_link7", "left_link8", "right_link7", "right_link8")
@@ -291,31 +299,65 @@ def apply_gripper_finger_covers(root):
         )
 
 
-def replace_link_collisions_with_box(root, link_name, center, size):
+def add_box_collision(link_element, name, center, size, rpy=(0.0, 0.0, 0.0)):
+    collision_element = ET.SubElement(link_element, "collision", {"name": name})
+    ET.SubElement(
+        collision_element,
+        "origin",
+        xyz=format_urdf_values(center),
+        rpy=format_urdf_values(rpy),
+    )
+    geometry_element = ET.SubElement(collision_element, "geometry")
+    ET.SubElement(geometry_element, "box", size=format_urdf_values(size))
+
+
+def replace_link_collisions_with_boxes(root, link_name, collisions):
     link_element = root.find(f"./link[@name='{link_name}']")
     if link_element is None:
         raise RuntimeError(f"Missing URDF link for finger collision: {link_name}")
     for collision in list(link_element.findall("collision")):
         link_element.remove(collision)
-    collision_element = ET.SubElement(link_element, "collision")
-    ET.SubElement(collision_element, "origin", xyz=format_urdf_values(center), rpy="0 0 0")
-    geometry_element = ET.SubElement(collision_element, "geometry")
-    ET.SubElement(geometry_element, "box", size=format_urdf_values(size))
+    for name, center, size, rpy in collisions:
+        add_box_collision(link_element, name, center, size, rpy)
 
 
 def apply_simple_gripper_collisions(root):
     for side in ("left", "right"):
-        replace_link_collisions_with_box(
+        replace_link_collisions_with_boxes(
             root,
             f"{side}_link7",
-            GENESIS_LINK7_COLLISION_CENTER,
-            GENESIS_FINGER_COLLISION_BOX_SIZE,
+            (
+                (
+                    "finger_body_collision",
+                    GENESIS_LINK7_BODY_COLLISION_CENTER,
+                    GENESIS_FINGER_BODY_COLLISION_BOX_SIZE,
+                    (0.0, 0.0, 0.0),
+                ),
+                (
+                    "finger_cover_collision",
+                    GENESIS_LINK7_COVER_COLLISION_CENTER,
+                    GENESIS_FINGER_COVER_COLLISION_BOX_SIZE,
+                    GRIPPER_FINGER_LINK7_COVER_RPY,
+                ),
+            ),
         )
-        replace_link_collisions_with_box(
+        replace_link_collisions_with_boxes(
             root,
             f"{side}_link8",
-            GENESIS_LINK8_COLLISION_CENTER,
-            GENESIS_FINGER_COLLISION_BOX_SIZE,
+            (
+                (
+                    "finger_body_collision",
+                    GENESIS_LINK8_BODY_COLLISION_CENTER,
+                    GENESIS_FINGER_BODY_COLLISION_BOX_SIZE,
+                    (0.0, 0.0, 0.0),
+                ),
+                (
+                    "finger_cover_collision",
+                    GENESIS_LINK8_COVER_COLLISION_CENTER,
+                    GENESIS_FINGER_COVER_COLLISION_BOX_SIZE,
+                    GRIPPER_FINGER_LINK8_COVER_RPY,
+                ),
+            ),
         )
 
 
@@ -545,8 +587,8 @@ def piper_finger_collision_centers(robot):
     centers = []
     for side in ("left", "right"):
         for link_short, local_center in (
-            ("link7", GENESIS_LINK7_COLLISION_CENTER),
-            ("link8", GENESIS_LINK8_COLLISION_CENTER),
+            ("link7", GENESIS_LINK7_COVER_COLLISION_CENTER),
+            ("link8", GENESIS_LINK8_COVER_COLLISION_CENTER),
         ):
             link = robot.get_link(f"{side}_{link_short}")
             pos = link.get_pos().detach().cpu().numpy().astype(float)
@@ -774,8 +816,8 @@ def main():
         "open": max(physics_steps_per_action, 6),
         "hold_open": max(physics_steps_per_action, 4),
         "approach": max(physics_steps_per_action * 2, 12),
-        "lower": max(physics_steps_per_action, 5),
-        "hold_contact_open": max(physics_steps_per_action, 6),
+        "lower": max(physics_steps_per_action, 35),
+        "hold_contact_open": max(physics_steps_per_action, 35),
         "close": max(physics_steps_per_action, 6),
         "hold_closed": max(physics_steps_per_action, 6),
         "push": max(physics_steps_per_action * 3, 18),

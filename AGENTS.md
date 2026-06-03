@@ -112,9 +112,12 @@ Do NOT ask when:
   `(1.64, 0.72, 0.13)`, twice the previous X width while keeping the shirt and
   robots centered in the same workspace. The generated Genesis URDF rotates the
   local dual-arm baseline by yaw `90 deg` and places the root at
-  `(-0.30, -0.86, 0.0)`, so the URDF's built-in right-base offset becomes a
-  side-by-side table-front baseline with the shirt on the `+y` side of the
-  arms. The real Piper finger links
+  `(-0.30, -0.86, 0.137)`. That root height comes from the physical setup
+  measurement that the Piper-X shoulder joint center is `13 cm` above the
+  tabletop: the URDF shoulder center is `0.123 m` above `base_link`, while the
+  table top is `z=0.13`, so `root_z = 0.13 + 0.13 - 0.123 = 0.137`. The URDF's
+  built-in right-base offset becomes a side-by-side table-front baseline with
+  the shirt on the `+y` side of the arms. The real Piper finger links
   `left_link7`, `left_link8`, `right_link7`, and `right_link8` are the only
   IPC-coupled manipulation links.
 
@@ -154,17 +157,17 @@ Do NOT ask when:
   the default Genesis near plane clipped nearby finger geometry in wrist views
   while the farther head camera still showed the full fingers.
 - The generated Piper-X URDF mirrors the ClothesFoldingEnv covered-finger setup:
-  it keeps the original grey J7/J8 finger visuals, adds black cover visuals
-  from `/home/horizon/gripper_finger_cover.stl` at scale `0.001`, and replaces
-  each finger collision with a simple IPC box centered at `(0, -0.046, -0.026)`
-  for `link7` and `(0, 0.046, -0.026)` for `link8`, with size
-  `(0.026, 0.080, 0.012)`. The visual cover placement follows
-  ClothesFoldingEnv, but the active Genesis IPC collision uses a slimmer,
-  non-overlapping box: in the Piper finger joint frame, link-local `Z` rotates
-  into the gripper closing direction, so using the old `0.080 m` local-Z
-  thickness made the two finger collisions self-intersect at IPC initialization.
-  Exact cover-length collision boxes should be revalidated against Genesis IPC
-  before use.
+  it keeps the original grey J7/J8 finger visuals and adds black cover visuals
+  from `/home/horizon/gripper_finger_cover.stl` at scale `0.001`. For Genesis
+  IPC, do not leave the covers as visual-only and do not use one large collision
+  box for the whole finger. Each finger link now gets two active collision
+  boxes, similar in spirit to Panda's separate fingertip pad boxes: a slim
+  finger-body box and a separate cover-surface box. The cover collision box is
+  the IK/manipulation reference point. Exact STL cover mesh collision is avoided
+  for now because it is slower and more fragile for IPC than primitive pad
+  boxes. In the Piper finger joint frame, link-local `Z` rotates into the
+  gripper closing direction, so keep collision boxes thin in local `Z` to avoid
+  closed-finger self-intersections.
 - The real-Piper Genesis script initializes the robot at all-zero qpos before
   `scene.build()` and starts the recording with a short zero-pose settle phase.
   It then interpolates from zero to the first IK target instead of teleporting
@@ -207,7 +210,14 @@ Do NOT ask when:
   all-zero settle, open, hold open, approach, lower to fingertip contact, hold
   contact open, close, hold closed, push `0.20 m` along `+y`, lift to
   `0.34 m`, hold lift, release, and retreat. The open gripper target is the
-  Isaac demo's `0.035 m`; the scripted contact, approach, and lift heights are
-  `0.220 m`, `0.250 m`, and `0.340 m`. Keep the ClothesFoldingEnv phase ratios
-  but use a Genesis-local `physics_steps_per_action` scale; the articulation
-  needs more than the Isaac minimum frame counts to settle onto the IK targets.
+  Isaac demo's `0.035 m`; the scripted approach and lift heights remain
+  `0.250 m` and `0.340 m`. Do not reuse the Isaac fingertip-contact height
+  `0.220 m` directly in Genesis: with this table and shirt mesh, that leaves
+  the IPC finger collision centers hovering above the settled cloth. Use the
+  Genesis-local contact target `TABLE_TOP_Z + 0.018` so the fingers lower near
+  tabletop level before closing. Keep the ClothesFoldingEnv phase ratios but
+  use a Genesis-local `physics_steps_per_action` scale; the articulation needs
+  more than the Isaac minimum frame counts to settle onto the IK targets. In
+  particular, do not scale the lower/contact-open phases below 35 Genesis steps:
+  closing before the arm settles can make the gripper appear to close above the
+  shirt even when the IK target itself is at table level.
