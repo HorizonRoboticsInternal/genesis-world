@@ -166,23 +166,26 @@ Do NOT ask when:
   finger-body box and a separate cover-surface box. The cover collision box is
   the IK/manipulation reference point. Exact STL cover mesh collision is avoided
   for now because it is slower and more fragile for IPC than primitive pad
-  boxes. In the Piper finger joint frame, link-local `Z` rotates into the
-  gripper closing direction, so keep collision boxes thin in local `Z` to avoid
-  closed-finger self-intersections.
-- For contact-only Piper-X shirt lift tuning, the current stable covered-finger
-  IPC box sizes are finger body `(0.020, 0.065, 0.010)` and cover surface
-  `(0.044, 0.105, 0.014)` in link-local XYZ, with cover collision centers used
-  for IK local points. The current local tuning uses gripper IPC
-  `coup_friction=12.0`, gripper gains `kp=2600`, `kv=260`, and force limit
-  `1200`, producing more reliable pre-lift closing than the original `800/80`
-  drive while keeping the scripted contact trajectory. The best pre-squeeze
-  smoke run produced about `0.114 m` max cloth lift over the initial centroid
-  without changing the scripted trajectory. A thicker cover box
-  `(0.048, 0.115, 0.018)` failed Genesis IPC initialization because the closed
-  finger collision geometry self-intersected. For the stable `(0.044, 0.105,
-  0.014)` cover boxes, the smallest residual closed gripper gap that passes IPC
-  initialization is exactly `0.0 m`; `--closed-opening 0.006`, `0.010`, and
-  `0.020` also build, but reduced lift in the unchanged scripted trajectory.
+  boxes. Match the primitive cover collision box to the STL visual bounds
+  before tuning trajectory/contact: the local cover mesh bounds are about
+  `0.0437 x 0.0700 x 0.0224 m`, centered near the finger link frame after the
+  current visual-origin transform. In the Piper finger joint frame, link-local
+  `Z` rotates into the gripper closing direction; a full `0.0224 m` visual
+  thickness intersects at Genesis IPC build time, so the primitive cover box
+  keeps the visual-matched `X/Y` footprint but clips local `Z` for clearance.
+- For contact-only Piper-X shirt lift tuning, the covered-finger IPC box sizes
+  are finger body `(0.020, 0.065, 0.010)` and cover surface
+  `(0.043709, 0.070000, 0.014000)` in link-local XYZ, with cover collision
+  centers matched to the STL visual transform and used for IK local points. A
+  full visual-thickness cover box `(0.043709, 0.070000, 0.022420)` fails IPC
+  initialization because opposing covers intersect in the neutral closed
+  gripper geometry. The latest local clamp tuning uses gripper
+  IPC `coup_friction=12.0`, gripper gains `kp=5000`, `kv=500`, and force limit
+  `3000`; with the previous oversized cover proxy `(0.044, 0.105, 0.014)` this
+  produced about `0.113 m` max cloth lift over the initial centroid. A thicker
+  oversized cover box `(0.048, 0.115, 0.018)` failed Genesis IPC initialization
+  because the closed finger collision geometry self-intersected. Revalidate IPC
+  init and lift quality after changing the cover box dimensions/centers.
   Use `--init-only --closed-opening <gap>` for fast IPC sanity probes, and use
   `--focus-grasp --record` while tuning: the full approach still simulates, but
   recording renders only lower/contact/close/hold/push/lift/release phases for
@@ -244,8 +247,13 @@ Do NOT ask when:
   gripper target closed throughout the lift and high-hold phases; at short
   horizon scales the articulation can still be rising when a release phase
   starts, so the closed lift/high-hold windows need explicit minimum durations
-  before any open-gripper release command. The open gripper target is the
-  Isaac demo's `0.035 m`, and the scripted approach/lift heights are
+  before any open-gripper release command. A local ablation that slowed lift
+  from 50 to 100 steps at 50 Hz made the final cloth lift worse
+  (`0.0586 m` versus `0.0827 m` max lift over initial), so visible one-sided
+  slipping should be debugged first through pre-lift clamp quality, gripper
+  authority, and left/right gripper-gap diagnostics rather than lift speed
+  alone. The open gripper target is the Isaac demo's `0.035 m`, and the
+  scripted approach/lift heights are
   `0.250 m` and `0.460 m`. Do not reuse the Isaac
   fingertip-contact height `0.220 m` directly in Genesis: with this table and
   shirt mesh, that leaves the IPC finger collision centers hovering above the

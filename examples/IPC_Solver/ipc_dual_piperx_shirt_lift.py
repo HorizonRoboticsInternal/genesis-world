@@ -110,17 +110,20 @@ GRIPPER_FINGER_LINK8_COLLISION_CENTER = (
 GENESIS_FINGER_BODY_COLLISION_BOX_SIZE = (0.020, 0.065, 0.010)
 GENESIS_LINK7_BODY_COLLISION_CENTER = (0.0, -0.027, -0.018)
 GENESIS_LINK8_BODY_COLLISION_CENTER = (0.0, 0.027, -0.018)
-GENESIS_FINGER_COVER_COLLISION_BOX_SIZE = (0.044, 0.105, 0.014)
-GENESIS_LINK7_COVER_COLLISION_CENTER = GRIPPER_FINGER_LINK7_COLLISION_CENTER
-GENESIS_LINK8_COVER_COLLISION_CENTER = GRIPPER_FINGER_LINK8_COLLISION_CENTER
+# Match the cover collision boxes to the STL visual bounds. The old cover
+# collision was a long, thin proxy centered near the cover tip; the visual mesh
+# is shorter, thicker, and centered close to the finger link frame.
+GENESIS_FINGER_COVER_COLLISION_BOX_SIZE = (0.04370902348, 0.07000000000, 0.01400000000)
+GENESIS_LINK7_COVER_COLLISION_CENTER = (0.0, -0.000031894, -0.009)
+GENESIS_LINK8_COVER_COLLISION_CENTER = (0.0, 0.000031894, -0.009)
 PIPER_IK_LOCAL_POINTS = (GENESIS_LINK7_COVER_COLLISION_CENTER, GENESIS_LINK8_COVER_COLLISION_CENTER)
 GRIPPER_FINGER_LINK7_COVER_RPY = (0.0, math.pi, math.pi)
 GRIPPER_FINGER_LINK8_COVER_RPY = (0.0, math.pi, 0.0)
 PIPER_COUPLED_FINGER_LINKS = ("left_link7", "left_link8", "right_link7", "right_link8")
 PIPER_IPC_COUP_FRICTION = 12.0
-PIPER_GRIPPER_KP = 2600.0
-PIPER_GRIPPER_KV = 260.0
-PIPER_GRIPPER_FORCE_LIMIT = 1200.0
+PIPER_GRIPPER_KP = 5000.0
+PIPER_GRIPPER_KV = 500.0
+PIPER_GRIPPER_FORCE_LIMIT = 3000.0
 GENESIS_IPC_CLOTH_KWARGS = {
     "E": 6e4,
     "nu": 0.49,
@@ -700,6 +703,17 @@ def piper_finger_collision_centers(robot):
     return np.asarray(centers, dtype=float)
 
 
+def piper_gripper_diagnostics(robot):
+    finger_centers = piper_finger_collision_centers(robot)
+    gripper_qpos = robot.get_qpos(qs_idx_local=ALL_GRIPPER_DOFS).detach().cpu().numpy()
+    return {
+        "left_finger_z": float(np.mean(finger_centers[:2, 2])),
+        "right_finger_z": float(np.mean(finger_centers[2:, 2])),
+        "left_gap": float(np.mean(np.abs(gripper_qpos[:2]))),
+        "right_gap": float(np.mean(np.abs(gripper_qpos[2:]))),
+    }
+
+
 def piper_finger_target_positions(y, z, gripper_qpos, x_offset=0.0):
     left_x, right_x = PIPER_GRASP_BASE_XS
     return np.asarray(
@@ -879,15 +893,24 @@ def step_phase(
             if robot is None:
                 finger_z = float("nan")
                 grip_gap = float("nan")
+                diagnostics = {
+                    "left_finger_z": float("nan"),
+                    "right_finger_z": float("nan"),
+                    "left_gap": float("nan"),
+                    "right_gap": float("nan"),
+                }
             else:
-                finger_z = float(np.mean(piper_finger_collision_centers(robot)[:, 2]))
-                gripper_qpos = robot.get_qpos(qs_idx_local=ALL_GRIPPER_DOFS).detach().cpu().numpy()
-                grip_gap = float(np.mean(np.abs(gripper_qpos)))
+                diagnostics = piper_gripper_diagnostics(robot)
+                finger_z = 0.5 * (diagnostics["left_finger_z"] + diagnostics["right_finger_z"])
+                grip_gap = 0.5 * (diagnostics["left_gap"] + diagnostics["right_gap"])
             print(
                 f"[{phase:>8s}] step={i + 1:04d} "
                 f"centroid=({stats['centroid'][0]:+.3f}, {stats['centroid'][1]:+.3f}, {stats['centroid'][2]:+.3f}) "
                 f"z_min={stats['min_z']:.3f} z_max={stats['max_z']:.3f} "
-                f"finger_z={finger_z:.3f} grip_gap={grip_gap:.4f} sentinel={stats['sentinel_count']}"
+                f"finger_z={finger_z:.3f} grip_gap={grip_gap:.4f} "
+                f"left_z={diagnostics['left_finger_z']:.3f} right_z={diagnostics['right_finger_z']:.3f} "
+                f"left_gap={diagnostics['left_gap']:.4f} right_gap={diagnostics['right_gap']:.4f} "
+                f"sentinel={stats['sentinel_count']}"
             )
 
 
@@ -938,8 +961,8 @@ def main():
         "approach": max(physics_steps_per_action * 2, 6),
         "lower": max(physics_steps_per_action, 18),
         "hold_contact_open": max(physics_steps_per_action, 18),
-        "close": max(physics_steps_per_action * 2, 9),
-        "hold_closed": max(physics_steps_per_action * 4, 18),
+        "close": max(physics_steps_per_action * 4, 25),
+        "hold_closed": max(physics_steps_per_action * 8, 45),
         "push": max(physics_steps_per_action * 3, 9),
         "lift": max(physics_steps_per_action * 10, 50),
         "hold_lift": max(physics_steps_per_action * 8, 40),
