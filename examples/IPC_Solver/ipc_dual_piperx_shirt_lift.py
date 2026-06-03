@@ -867,12 +867,13 @@ def step_phase(
     record,
     log_interval=20,
 ):
-    for i, qpos_target in enumerate(qpos_targets):
+    phase_targets = tuple(qpos_targets)
+    for i, qpos_target in enumerate(phase_targets):
         if robot is not None:
             robot.control_dofs_position(qpos_target[ALL_CONTROL_DOFS], ALL_CONTROL_DOFS)
         scene.step()
         record_frame(cameras, record)
-        is_final_step = i + 1 == len(qpos_targets)
+        is_final_step = i + 1 == len(phase_targets)
         if i == 0 or is_final_step or (i + 1) % log_interval == 0:
             stats = cloth_stats(shirt)
             if robot is None:
@@ -940,8 +941,8 @@ def main():
         "close": max(physics_steps_per_action * 2, 9),
         "hold_closed": max(physics_steps_per_action * 4, 18),
         "push": max(physics_steps_per_action * 3, 9),
-        "lift": max(physics_steps_per_action * 2, 6),
-        "hold_lift": max(physics_steps_per_action * 2, 6),
+        "lift": max(physics_steps_per_action * 10, 50),
+        "hold_lift": max(physics_steps_per_action * 8, 40),
         "release": max(physics_steps_per_action * 2, 6),
         "retreat": max(physics_steps_per_action * 5, 18),
     }

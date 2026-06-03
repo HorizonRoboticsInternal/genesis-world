@@ -240,9 +240,13 @@ Do NOT ask when:
   open-start approach, lower to fingertip contact, hold contact open, close,
   hold closed, push `0.20 m` along `+y`, lift to `0.46 m`, hold lift, release,
   and retreat. Do not add a second squeeze/push/lift phase after the push; it
-  can look like a second manipulation attempt in the recording. The open
-  gripper target is the Isaac demo's `0.035 m`, and the scripted approach/lift
-  heights are `0.250 m` and `0.460 m`. Do not reuse the Isaac
+  can look like a second manipulation attempt in the recording. Keep the
+  gripper target closed throughout the lift and high-hold phases; at short
+  horizon scales the articulation can still be rising when a release phase
+  starts, so the closed lift/high-hold windows need explicit minimum durations
+  before any open-gripper release command. The open gripper target is the
+  Isaac demo's `0.035 m`, and the scripted approach/lift heights are
+  `0.250 m` and `0.460 m`. Do not reuse the Isaac
   fingertip-contact height `0.220 m` directly in Genesis: with this table and
   shirt mesh, that leaves the IPC finger collision centers hovering above the
   settled cloth. Use the Genesis-local contact target `TABLE_TOP_Z + 0.018` so
