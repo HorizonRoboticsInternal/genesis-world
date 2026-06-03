@@ -97,11 +97,10 @@ Do NOT ask when:
 
 - The scripted shirt lift demo lives at
   `examples/IPC_Solver/ipc_dual_piperx_shirt_lift.py`.
-  The current verified path uses IPC FEM cloth, standalone IPC-coupled rigid
-  parallel-gripper boxes as the actual contact driver, a table, three cameras,
-  and an imported DexGarmentLab T-shirt mesh. The Piper-X arms are opt-in
-  visual context and are held stationary while the standalone grippers test
-  grasping:
+  The current verified path uses IPC FEM cloth, dual Piper-X covered fingers as
+  the contact driver, a table, three cameras, and an imported DexGarmentLab
+  T-shirt mesh. The old standalone parallel-gripper boxes were removed, so the
+  script now requires Piper-X to be visible and driven:
 
   ```bash
   .venv/bin/python examples/IPC_Solver/ipc_dual_piperx_shirt_lift.py \
@@ -109,11 +108,15 @@ Do NOT ask when:
     --output-dir recordings/ipc_dual_piperx_shirt_lift_ipc_y_grip
   ```
 
-  Add `--show-piper` when the stationary dual Piper-X arms should be visible.
-  The generated Genesis URDF rotates the local dual-arm baseline by yaw `90 deg`
-  and places the root at `(-0.30, -0.86, 0.0)`, so the URDF's built-in
-  right-base offset becomes a side-by-side table-front baseline with the shirt
-  on the `+y` side of the arms.
+  The tabletop is centered at `(0.0, -0.48, 0.065)` and uses size
+  `(1.64, 0.72, 0.13)`, twice the previous X width while keeping the shirt and
+  robots centered in the same workspace. The generated Genesis URDF rotates the
+  local dual-arm baseline by yaw `90 deg` and places the root at
+  `(-0.30, -0.86, 0.0)`, so the URDF's built-in right-base offset becomes a
+  side-by-side table-front baseline with the shirt on the `+y` side of the
+  arms. The real Piper finger links
+  `left_link7`, `left_link8`, `right_link7`, and `right_link8` are the only
+  IPC-coupled manipulation links.
 
 - The demo uses the checked-in DexGarmentLab short-sleeve T-shirt OBJ asset at
   `genesis/assets/meshes/garments/dexgarmentlab_short_sleeve_tshirt.obj`. The
@@ -131,8 +134,8 @@ Do NOT ask when:
   The old PBD path fixed/overrode selected particles with `fix_particles_*` or
   `set_particles_pos()`, which made lift reliable but was not the same behavior
   as Genesis' IPC teleop examples. The current demo has no attachment calls;
-  the shirt is moved only by IPC contact/friction against the rigid gripper
-  boxes.
+  the shirt is moved only by IPC contact/friction against the covered Piper-X
+  finger links.
 - When `--show-piper` is used, the script injects RobotTwin-style
   `left_camera` and `right_camera` fixed links under `left_link6` and
   `right_link6` using the calibrated Piper-X wrist camera origins from
@@ -148,7 +151,40 @@ Do NOT ask when:
   front/center debug view because the ClothesFoldingEnv middle camera was noted
   as slightly off. When recording, the script saves individual camera MP4s plus
   `left_mid_right.mp4`, a 60 FPS horizontal stack of `left_camera`,
-  `head_camera`, and `right_camera`.
+  `head_camera`, and `right_camera`. Wrist cameras use a `1 cm` near plane;
+  the default Genesis near plane clipped nearby finger geometry in wrist views
+  while the farther head camera still showed the full fingers.
+- The generated Piper-X URDF mirrors the ClothesFoldingEnv covered-finger setup:
+  it keeps the original grey J7/J8 finger visuals, adds black cover visuals
+  from `/home/horizon/gripper_finger_cover.stl` at scale `0.001`, and replaces
+  each finger collision with a simple IPC box centered at `(0, -0.046, -0.026)`
+  for `link7` and `(0, 0.046, -0.026)` for `link8`, with size
+  `(0.026, 0.080, 0.012)`. The visual cover placement follows
+  ClothesFoldingEnv, but the active Genesis IPC collision uses a slimmer,
+  non-overlapping box: in the Piper finger joint frame, link-local `Z` rotates
+  into the gripper closing direction, so using the old `0.080 m` local-Z
+  thickness made the two finger collisions self-intersect at IPC initialization.
+  Exact cover-length collision boxes should be revalidated against Genesis IPC
+  before use.
+- The real-Piper Genesis script initializes the robot at all-zero qpos before
+  `scene.build()` and starts the recording with a short zero-pose settle phase.
+  It then interpolates from zero to the first IK target instead of teleporting
+  the articulation after IPC build. Post-build `set_qpos()` jumps can make the
+  first `ipc_world.advance()` very slow because the soft-constraint bodies have
+  to correct a large frame-1 transform jump.
+- In the real-Piper Genesis recording, the standalone proxy grippers are no
+  longer present. If the shirt still moves, it is from IPC contact against the
+  Piper finger links. The current scripted IK targets one real IPC collision
+  center per arm, `left_link7` and `right_link8`, using Genesis'
+  `local_points` argument; this avoids the previous gripper-base target
+  mismatch where low gripper-base IK error still missed the shirt. A four-finger
+  collision-center IK target was over-constrained for these arms at the current
+  poses and produced about `8 cm` position error, while the one-finger-per-arm
+  target solves to roughly `1e-4 m` or better. The resulting IPC-only sequence
+  visibly deforms/moves the shirt, but it is still not a reliable lift grasp
+  without an attachment/sticking mechanism or further contact/trajectory tuning.
+  The script logs `finger_z` from the actual IPC collision-box centers rather
+  than from the misleading link origins.
 - Genesis can warn about falling back to the legacy URDF parser for Piper DAE
   meshes and filtering neutral self-collision geometry pairs; the local short
   runtime check completed despite those warnings.
@@ -167,8 +203,8 @@ Do NOT ask when:
   front/back-closing gripper pairs with Piper-like `0.026 x 0.012 x 0.080 m`
   box geometry. A side-closing setup and a `10 mm` closed gap only wrinkled the
   shirt and slipped during lift.
-- The current scripted IPC sequence uses two gripper pairs near the shirt
-  middle (`x=-0.08` and `x=0.08`), lifts high, holds, shakes laterally, releases,
-  then descends open to a near-table clearance of `0.2 mm`, closes again, lifts,
-  and releases. The center camera should stay high/wide enough to frame
-  `FINGER_LIFT_Z = TABLE_TOP_Z + 0.36`.
+- The current scripted IPC sequence moves from all-zero qpos to two
+  shirt-centered contact targets at `x=-0.10` and `x=0.10`, approaches, lowers,
+  closes, pushes, lifts, shakes laterally, releases, then attempts a lower
+  second grasp. The center camera should stay high/wide enough to frame
+  `PIPER_BASE_LIFT_Z = TABLE_TOP_Z + 0.45`.
