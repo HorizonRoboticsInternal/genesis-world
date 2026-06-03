@@ -19,10 +19,26 @@ RIGHT_GRIPPER_DOFS = [14, 15]
 ALL_GRIPPER_DOFS = LEFT_GRIPPER_DOFS + RIGHT_GRIPPER_DOFS
 ALL_CONTROL_DOFS = ALL_ARM_DOFS + ALL_GRIPPER_DOFS
 
+SIM_DT = 0.02
+SIM_SUBSTEPS = 4
+RECORDING_FPS = int(round(1.0 / SIM_DT))
 CFE_OPENING = 0.035
-OPEN_GRIPPER = np.array([CFE_OPENING, -CFE_OPENING, CFE_OPENING, -CFE_OPENING], dtype=np.float32)
-CLOSED_GRIPPER = np.zeros(4, dtype=np.float32)
-ZERO_INITIAL_QPOS = np.zeros(16, dtype=np.float32)
+CLOSED_OPENING = 0.0
+
+
+def gripper_qpos(opening):
+    return np.array([opening, -opening, opening, -opening], dtype=np.float32)
+
+
+def zero_initial_qpos(closed_opening):
+    qpos = np.zeros(16, dtype=np.float32)
+    qpos[ALL_GRIPPER_DOFS] = gripper_qpos(closed_opening)
+    return qpos
+
+
+OPEN_GRIPPER = gripper_qpos(CFE_OPENING)
+CLOSED_GRIPPER = gripper_qpos(CLOSED_OPENING)
+ZERO_INITIAL_QPOS = zero_initial_qpos(CLOSED_OPENING)
 
 TABLE_CENTER = np.array([0.0, -0.48, 0.065], dtype=np.float32)
 TABLE_SIZE = np.array([1.64, 0.72, 0.13], dtype=np.float32)
@@ -36,7 +52,7 @@ ROBOT_ROOT_EULER = (0.0, 0.0, 90.0)
 CFE_APPROACH_HEIGHT = 0.250
 CFE_FINGERTIP_CONTACT_HEIGHT = 0.220
 CFE_PUSH_DISTANCE = 0.200
-CFE_LIFT_HEIGHT = 0.340
+CFE_LIFT_HEIGHT = 0.460
 GENESIS_FINGERTIP_CONTACT_HEIGHT = TABLE_TOP_Z + 0.018
 PIPER_BASE_START_Y = TABLE_CENTER[1] - TABLE_SIZE[1] * 0.5 - 0.06
 PIPER_BASE_CONTACT_Y = SHIRT_CENTER[1]
@@ -85,16 +101,20 @@ GRIPPER_FINGER_LINK8_COLLISION_CENTER = (
 # the useful finger length in Genesis, while link-local Z is the
 # closing-direction thickness. Keep the boxes thin enough to avoid closed-finger
 # self-intersections, similar to Panda's non-overlap fingertip pad boxes.
-GENESIS_FINGER_BODY_COLLISION_BOX_SIZE = (0.020, 0.060, 0.010)
+GENESIS_FINGER_BODY_COLLISION_BOX_SIZE = (0.020, 0.065, 0.010)
 GENESIS_LINK7_BODY_COLLISION_CENTER = (0.0, -0.027, -0.018)
 GENESIS_LINK8_BODY_COLLISION_CENTER = (0.0, 0.027, -0.018)
-GENESIS_FINGER_COVER_COLLISION_BOX_SIZE = (0.044, 0.090, 0.010)
+GENESIS_FINGER_COVER_COLLISION_BOX_SIZE = (0.044, 0.105, 0.014)
 GENESIS_LINK7_COVER_COLLISION_CENTER = GRIPPER_FINGER_LINK7_COLLISION_CENTER
 GENESIS_LINK8_COVER_COLLISION_CENTER = GRIPPER_FINGER_LINK8_COLLISION_CENTER
 PIPER_IK_LOCAL_POINTS = (GENESIS_LINK7_COVER_COLLISION_CENTER, GENESIS_LINK8_COVER_COLLISION_CENTER)
 GRIPPER_FINGER_LINK7_COVER_RPY = (0.0, math.pi, math.pi)
 GRIPPER_FINGER_LINK8_COVER_RPY = (0.0, math.pi, 0.0)
 PIPER_COUPLED_FINGER_LINKS = ("left_link7", "left_link8", "right_link7", "right_link8")
+PIPER_IPC_COUP_FRICTION = 12.0
+PIPER_GRIPPER_KP = 2600.0
+PIPER_GRIPPER_KV = 260.0
+PIPER_GRIPPER_FORCE_LIMIT = 1200.0
 GENESIS_IPC_CLOTH_KWARGS = {
     "E": 6e4,
     "nu": 0.49,
@@ -113,8 +133,12 @@ PIPERX_WRIST_CAMERA_ORIGINS = {
         "rpy": "-0.002445405606400719 -1.216058912088991 1.5665889686029582",
     },
 }
-ROBOTWIN_HEAD_CAMERA_POSITION = np.array(
-    [-0.007383059883329407, ROBOT_ROOT_POS[1] - 0.31715773707478656, 0.6036358425132415],
+ROBOTWIN_HEAD_CAMERA_LOCAL_POSITION = np.array(
+    [-0.007383059883329407, -0.31715773707478656, 0.6036358425132415],
+    dtype=np.float32,
+)
+ROBOTWIN_HEAD_CAMERA_POSITION = ROBOTWIN_HEAD_CAMERA_LOCAL_POSITION + np.array(
+    [0.0, ROBOT_ROOT_POS[1], ROBOT_ROOT_Z],
     dtype=np.float32,
 )
 ROBOTWIN_HEAD_CAMERA_QUAT_XYZW = np.array(
@@ -169,6 +193,24 @@ def parse_args():
         type=float,
         default=1.0,
         help="Scale scripted phase lengths for smoke tests.",
+    )
+    parser.add_argument(
+        "--focus-grasp",
+        action="store_true",
+        default=False,
+        help="When recording, render only lower/contact/close/push/lift/release phases for faster grasp tuning.",
+    )
+    parser.add_argument(
+        "--closed-opening",
+        type=float,
+        default=CLOSED_OPENING,
+        help="Residual per-finger closed gripper opening, in meters.",
+    )
+    parser.add_argument(
+        "--init-only",
+        action="store_true",
+        default=False,
+        help="Build the scene and exit; useful for fast IPC self-intersection probes.",
     )
     parser.add_argument("--no-ipc", action="store_true", default=False, help="Disable IPC contacts for ablation.")
     parser.add_argument("--cpu", action="store_true", default=False, help="Force Genesis CPU backend.")
@@ -443,7 +485,7 @@ def make_scene(args, shirt_mesh_path, robot_urdf_path):
     )
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=0.01, substeps=2, gravity=(0.0, 0.0, -9.81)),
+        sim_options=gs.options.SimOptions(dt=SIM_DT, substeps=SIM_SUBSTEPS, gravity=(0.0, 0.0, -9.81)),
         coupler_options=coupler_options,
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.16, -1.30, 0.72),
@@ -478,7 +520,7 @@ def make_scene(args, shirt_mesh_path, robot_urdf_path):
             gs.materials.Rigid(
                 coup_type="two_way_soft_constraint",
                 coup_links=PIPER_COUPLED_FINGER_LINKS,
-                coup_friction=4.0,
+                coup_friction=PIPER_IPC_COUP_FRICTION,
                 sdf_cell_size=0.003,
             )
             if not args.no_ipc
@@ -631,18 +673,18 @@ def solve_piper_qpos(robot, seed_qpos, target_positions, gripper_qpos):
 
 
 def zero_open_qpos():
-    qpos = ZERO_INITIAL_QPOS.copy()
+    qpos = zero_initial_qpos(CLOSED_OPENING)
     qpos[ALL_GRIPPER_DOFS] = OPEN_GRIPPER
     return qpos
 
 
-def build_piper_motion_targets(robot):
+def build_piper_motion_targets(robot, closed_gripper):
     target_specs = (
         ("approach_open", PIPER_BASE_CONTACT_Y, PIPER_BASE_HIGH_Z, OPEN_GRIPPER, 0.0),
         ("low_open", PIPER_BASE_CONTACT_Y, PIPER_BASE_CONTACT_Z, OPEN_GRIPPER, 0.0),
-        ("low_closed", PIPER_BASE_CONTACT_Y, PIPER_BASE_CONTACT_Z, CLOSED_GRIPPER, 0.0),
-        ("pushed_closed", PIPER_BASE_PUSH_Y, PIPER_BASE_CONTACT_Z, CLOSED_GRIPPER, 0.0),
-        ("lift", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, CLOSED_GRIPPER, 0.0),
+        ("low_closed", PIPER_BASE_CONTACT_Y, PIPER_BASE_CONTACT_Z, closed_gripper, 0.0),
+        ("pushed_closed", PIPER_BASE_PUSH_Y, PIPER_BASE_CONTACT_Z, closed_gripper, 0.0),
+        ("lift", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, closed_gripper, 0.0),
         ("release", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, OPEN_GRIPPER, 0.0),
         ("retreat", PIPER_BASE_START_Y, PIPER_BASE_LIFT_Z, OPEN_GRIPPER, 0.0),
     )
@@ -705,11 +747,19 @@ def camera_recording_path(output_dir, video_path, camera_name):
     return output_dir / f"{camera_name}.mp4"
 
 
+def should_record_phase(args, phase):
+    if not args.record:
+        return False
+    if not args.focus_grasp:
+        return True
+    return phase in {"lower", "contact", "close", "hold", "push", "squeeze", "lift", "hi_hold", "release", "retreat"}
+
+
 def save_camera_recordings(camera_items, output_dir, video_path):
     recording_paths = {}
     for camera_name, camera in camera_items:
         camera_path = camera_recording_path(output_dir, video_path, camera_name)
-        camera.stop_recording(save_to_filename=str(camera_path), fps=60)
+        camera.stop_recording(save_to_filename=str(camera_path), fps=RECORDING_FPS)
         recording_paths[camera_name] = camera_path
         print(f"Saved {camera_name} recording to {camera_path}")
     return recording_paths
@@ -738,7 +788,7 @@ def compose_left_mid_right_video(recording_paths, output_dir, combined_video_nam
         "-map",
         "[v]",
         "-r",
-        "60",
+        str(RECORDING_FPS),
         str(combined_path),
     ]
     subprocess.run(command, check=True)
@@ -765,13 +815,16 @@ def step_phase(
             stats = cloth_stats(shirt)
             if robot is None:
                 finger_z = float("nan")
+                grip_gap = float("nan")
             else:
                 finger_z = float(np.mean(piper_finger_collision_centers(robot)[:, 2]))
+                gripper_qpos = robot.get_qpos(qs_idx_local=ALL_GRIPPER_DOFS).detach().cpu().numpy()
+                grip_gap = float(np.mean(np.abs(gripper_qpos)))
             print(
                 f"[{phase:>8s}] step={i + 1:04d} "
                 f"centroid=({stats['centroid'][0]:+.3f}, {stats['centroid'][1]:+.3f}, {stats['centroid'][2]:+.3f}) "
                 f"z_min={stats['min_z']:.3f} z_max={stats['max_z']:.3f} "
-                f"finger_z={finger_z:.3f} sentinel={stats['sentinel_count']}"
+                f"finger_z={finger_z:.3f} grip_gap={grip_gap:.4f} sentinel={stats['sentinel_count']}"
             )
 
 
@@ -790,41 +843,45 @@ def main():
     scene, _, shirt, robot, camera_items = make_scene(args, shirt_mesh_path, robot_urdf_path)
     cameras = [camera for _, camera in camera_items]
 
-    neutral_qpos = ZERO_INITIAL_QPOS.copy()
+    closed_gripper = gripper_qpos(args.closed_opening)
+    closed_init_qpos = zero_initial_qpos(args.closed_opening)
+    open_start_qpos = zero_open_qpos()
+    initial_qpos = closed_init_qpos if args.init_only else open_start_qpos
     if robot is not None:
-        set_robot_init_qpos(robot, neutral_qpos)
+        set_robot_init_qpos(robot, initial_qpos)
     scene.build()
+    if args.init_only:
+        print(f"IPC init probe succeeded: closed_opening={args.closed_opening:.6f}")
+        return
     if robot is None:
         raise RuntimeError("The standalone grippers were removed; run without --hide-piper for robot manipulation.")
     attach_robotwin_wrist_cameras(robot, camera_items)
 
     if robot is not None:
-        robot.set_dofs_kp(np.array([4500.0] * 12 + [800.0] * 4, dtype=np.float32), ALL_CONTROL_DOFS)
-        robot.set_dofs_kv(np.array([450.0] * 12 + [80.0] * 4, dtype=np.float32), ALL_CONTROL_DOFS)
+        robot.set_dofs_kp(np.array([4500.0] * 12 + [PIPER_GRIPPER_KP] * 4, dtype=np.float32), ALL_CONTROL_DOFS)
+        robot.set_dofs_kv(np.array([450.0] * 12 + [PIPER_GRIPPER_KV] * 4, dtype=np.float32), ALL_CONTROL_DOFS)
         robot.set_dofs_force_range(
-            np.array([-87.0] * 12 + [-300.0] * 4, dtype=np.float32),
-            np.array([87.0] * 12 + [300.0] * 4, dtype=np.float32),
+            np.array([-87.0] * 12 + [-PIPER_GRIPPER_FORCE_LIMIT] * 4, dtype=np.float32),
+            np.array([87.0] * 12 + [PIPER_GRIPPER_FORCE_LIMIT] * 4, dtype=np.float32),
             ALL_CONTROL_DOFS,
         )
-        piper_targets = build_piper_motion_targets(robot)
+        piper_targets = build_piper_motion_targets(robot, closed_gripper)
     else:
         piper_targets = {}
 
-    physics_steps_per_action = max(1, int(35 * args.horizon_scale))
+    physics_steps_per_action = max(1, int(round(0.35 * args.horizon_scale / SIM_DT)))
     phase_steps = {
-        "settle": max(1, int(40 * args.horizon_scale)),
-        "open": max(physics_steps_per_action, 6),
-        "hold_open": max(physics_steps_per_action, 4),
-        "approach": max(physics_steps_per_action * 2, 12),
-        "lower": max(physics_steps_per_action, 35),
-        "hold_contact_open": max(physics_steps_per_action, 35),
-        "close": max(physics_steps_per_action, 6),
-        "hold_closed": max(physics_steps_per_action, 6),
-        "push": max(physics_steps_per_action * 3, 18),
-        "lift": max(physics_steps_per_action * 2, 12),
-        "hold_lift": max(physics_steps_per_action, 6),
-        "release": max(physics_steps_per_action, 6),
-        "retreat": max(physics_steps_per_action * 2, 12),
+        "approach": max(physics_steps_per_action * 2, 6),
+        "lower": max(physics_steps_per_action, 18),
+        "hold_contact_open": max(physics_steps_per_action, 18),
+        "close": max(physics_steps_per_action * 2, 9),
+        "hold_closed": max(physics_steps_per_action * 4, 18),
+        "push": max(physics_steps_per_action * 3, 9),
+        "pre_lift_squeeze": max(physics_steps_per_action * 10, 45),
+        "lift": max(physics_steps_per_action * 2, 6),
+        "hold_lift": max(physics_steps_per_action * 2, 6),
+        "release": max(physics_steps_per_action * 2, 6),
+        "retreat": max(physics_steps_per_action * 5, 18),
     }
 
     if args.record:
@@ -838,37 +895,9 @@ def main():
             robot,
             shirt,
             cameras,
-            "settle",
-            [neutral_qpos] * phase_steps["settle"],
-            args.record,
-        )
-        open_start_qpos = zero_open_qpos()
-        step_phase(
-            scene,
-            robot,
-            shirt,
-            cameras,
-            "open",
-            interpolate_qpos(neutral_qpos, open_start_qpos, phase_steps["open"]),
-            args.record,
-        )
-        step_phase(
-            scene,
-            robot,
-            shirt,
-            cameras,
-            "holdopen",
-            [open_start_qpos] * phase_steps["hold_open"],
-            args.record,
-        )
-        step_phase(
-            scene,
-            robot,
-            shirt,
-            cameras,
             "approach",
             interpolate_qpos(open_start_qpos, piper_targets["approach_open"], phase_steps["approach"]),
-            args.record,
+            should_record_phase(args, "approach"),
         )
         step_phase(
             scene,
@@ -877,7 +906,7 @@ def main():
             cameras,
             "lower",
             interpolate_qpos(piper_targets["approach_open"], piper_targets["low_open"], phase_steps["lower"]),
-            args.record,
+            should_record_phase(args, "lower"),
         )
         step_phase(
             scene,
@@ -886,7 +915,7 @@ def main():
             cameras,
             "contact",
             [piper_targets["low_open"]] * phase_steps["hold_contact_open"],
-            args.record,
+            should_record_phase(args, "contact"),
         )
         step_phase(
             scene,
@@ -895,7 +924,7 @@ def main():
             cameras,
             "close",
             interpolate_qpos(piper_targets["low_open"], piper_targets["low_closed"], phase_steps["close"]),
-            args.record,
+            should_record_phase(args, "close"),
         )
         step_phase(
             scene,
@@ -904,7 +933,7 @@ def main():
             cameras,
             "hold",
             [piper_targets["low_closed"]] * phase_steps["hold_closed"],
-            args.record,
+            should_record_phase(args, "hold"),
         )
         step_phase(
             scene,
@@ -913,7 +942,16 @@ def main():
             cameras,
             "push",
             interpolate_qpos(piper_targets["low_closed"], piper_targets["pushed_closed"], phase_steps["push"]),
-            args.record,
+            should_record_phase(args, "push"),
+        )
+        step_phase(
+            scene,
+            robot,
+            shirt,
+            cameras,
+            "squeeze",
+            [piper_targets["pushed_closed"]] * phase_steps["pre_lift_squeeze"],
+            should_record_phase(args, "squeeze"),
         )
         step_phase(
             scene,
@@ -922,7 +960,7 @@ def main():
             cameras,
             "lift",
             interpolate_qpos(piper_targets["pushed_closed"], piper_targets["lift"], phase_steps["lift"]),
-            args.record,
+            should_record_phase(args, "lift"),
         )
         step_phase(
             scene,
@@ -931,7 +969,7 @@ def main():
             cameras,
             "hi_hold",
             [piper_targets["lift"]] * phase_steps["hold_lift"],
-            args.record,
+            should_record_phase(args, "hi_hold"),
         )
         step_phase(
             scene,
@@ -940,7 +978,7 @@ def main():
             cameras,
             "release",
             interpolate_qpos(piper_targets["lift"], piper_targets["release"], phase_steps["release"]),
-            args.record,
+            should_record_phase(args, "release"),
         )
         step_phase(
             scene,
@@ -953,7 +991,7 @@ def main():
                 piper_targets["retreat"],
                 phase_steps["retreat"],
             ),
-            args.record,
+            should_record_phase(args, "retreat"),
         )
     finally:
         if args.record:

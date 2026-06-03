@@ -145,14 +145,15 @@ Do NOT ask when:
   `/home/horizon/RoboOrchardLab/post_training_foldclothes/fold_clothes_ro_piperx.config.json`.
   The fixed `head_camera` is the resized D455 profile from that config:
   `392x252`, `fy=310`, `fovy=44.23872564716461`. Use the calibration position
-  as a camera center in the Genesis workspace frame with only the table-front
-  `y` offset applied, giving roughly `(-0.007, -1.177, 0.604)`. Do not reuse
+  as a camera center in the Genesis workspace frame with the table-front `y`
+  offset and the real-root-height `z` offset applied, giving roughly
+  `(-0.007, -1.177, 0.741)`. Do not reuse
   the older transformed `z=1.35` placement; it frames the shirt too high and
   hides more of the arms than the real RobotTwin view. The D455 look direction
   is derived from the config quaternion by taking `-R[0, :]` as optical forward
   and `R[1, :]` as image-left, which points through the shirt center at about
   tabletop height. When recording, the script saves individual camera MP4s plus
-  `left_mid_right.mp4`, a 60 FPS horizontal stack of `left_camera`,
+  `left_mid_right.mp4`, a horizontal stack of `left_camera`,
   `head_camera`, and `right_camera`. Wrist cameras use a `1 cm` near plane;
   the default Genesis near plane clipped nearby finger geometry in wrist views
   while the farther head camera still showed the full fingers.
@@ -168,12 +169,31 @@ Do NOT ask when:
   boxes. In the Piper finger joint frame, link-local `Z` rotates into the
   gripper closing direction, so keep collision boxes thin in local `Z` to avoid
   closed-finger self-intersections.
-- The real-Piper Genesis script initializes the robot at all-zero qpos before
-  `scene.build()` and starts the recording with a short zero-pose settle phase.
-  It then interpolates from zero to the first IK target instead of teleporting
-  the articulation after IPC build. Post-build `set_qpos()` jumps can make the
-  first `ipc_world.advance()` very slow because the soft-constraint bodies have
-  to correct a large frame-1 transform jump.
+- For contact-only Piper-X shirt lift tuning, the current stable covered-finger
+  IPC box sizes are finger body `(0.020, 0.065, 0.010)` and cover surface
+  `(0.044, 0.105, 0.014)` in link-local XYZ, with cover collision centers used
+  for IK local points. The current local tuning uses gripper IPC
+  `coup_friction=12.0`, gripper gains `kp=2600`, `kv=260`, and force limit
+  `1200`, producing more reliable pre-lift closing than the original `800/80`
+  drive while keeping the scripted contact trajectory. The best pre-squeeze
+  smoke run produced about `0.114 m` max cloth lift over the initial centroid
+  without changing the scripted trajectory. A thicker cover box
+  `(0.048, 0.115, 0.018)` failed Genesis IPC initialization because the closed
+  finger collision geometry self-intersected. For the stable `(0.044, 0.105,
+  0.014)` cover boxes, the smallest residual closed gripper gap that passes IPC
+  initialization is exactly `0.0 m`; `--closed-opening 0.006`, `0.010`, and
+  `0.020` also build, but reduced lift in the unchanged scripted trajectory.
+  Use `--init-only --closed-opening <gap>` for fast IPC sanity probes, and use
+  `--focus-grasp --record` while tuning: the full approach still simulates, but
+  recording renders only lower/contact/close/hold/push/lift/release phases for
+  faster review.
+- The real-Piper Genesis script initializes normal episodes at open gripper qpos
+  before `scene.build()` and starts the first recorded frame with the approach
+  action; do not add a settle/open/hold-open lead-in just for video cleanliness.
+  For IPC init/gap checks, use `--init-only`; that path still initializes at the
+  configured closed opening before build. Post-build `set_qpos()` jumps can make
+  the first `ipc_world.advance()` very slow because the soft-constraint bodies
+  have to correct a large frame-1 transform jump.
 - In the real-Piper Genesis recording, the standalone proxy grippers are no
   longer present. If the shirt still moves, it is from IPC contact against the
   Piper finger links. The current scripted IK targets one real IPC collision
@@ -185,6 +205,16 @@ Do NOT ask when:
   target solves to roughly `1e-4 m` or better. The resulting IPC-only sequence
   visibly deforms/moves the shirt, but it is still not a reliable lift grasp
   without an attachment/sticking mechanism or further contact/trajectory tuning.
+- The Genesis IPC Piper shirt script uses `SimOptions(dt=0.02, substeps=4)`.
+  Each `scene.step()` advances `0.02 s` of simulated time, so external commands
+  run at `50 Hz`; internal physics substeps are `0.005 s` each, effectively
+  `200 Hz`. The camera recorder saves every rendered simulation step at
+  `50 FPS`, so MP4 playback matches simulated real time. Phase-step minima are
+  scaled for the `0.02 s` timestep to preserve roughly the same simulated
+  durations as the previous `0.01 s` setup. The first local 50 Hz full run wrote
+  `/home/horizon/genesis-world/recordings/ipc_dual_piperx_50hz_full_video/left_mid_right.mp4`;
+  it did not qualitatively change the current gripper issue, with `grip_gap`
+  still around `0.035 m` during squeeze/lift.
   The script logs `finger_z` from the actual IPC collision-box centers rather
   than from the misleading link origins.
 - Genesis can warn about falling back to the legacy URDF parser for Piper DAE
