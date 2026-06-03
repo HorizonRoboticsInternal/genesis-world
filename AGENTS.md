@@ -139,17 +139,16 @@ Do NOT ask when:
 - When `--show-piper` is used, the script injects RobotTwin-style
   `left_camera` and `right_camera` fixed links under `left_link6` and
   `right_link6` using the calibrated Piper-X wrist camera origins from
-  `/home/horizon/robo_orchard_lab` branch
-  `test/deploy_ckpt_in_RoboOrchardLab`. Genesis cameras attach to those links
-  with the frame conversion from RobotTwin/SAPIEN camera axes (`+X` optical
-  forward, `+Y` image-left, `+Z` image-up) to Genesis/OpenGL camera axes. The
-  static `head_camera` uses the RobotTwin Piper-X world pose
-  `[0.01715773707478663, -0.4573830598833294, 1.353635842513242]`, forward
-  `[0.03060834543810837, 0.5532082633105504, -0.8324804782062258]`, and D455
-  resized profile `392x252`, `fovy=44.23872564716461`, translated by the
-  Genesis table's `y=-0.48` workspace offset. This replaces the older
-  front/center debug view because the ClothesFoldingEnv middle camera was noted
-  as slightly off. When recording, the script saves individual camera MP4s plus
+  `/home/horizon/RoboOrchardLab/post_training_foldclothes/fold_clothes_ro_piperx.config.json`.
+  The fixed `head_camera` is the resized D455 profile from that config:
+  `392x252`, `fy=310`, `fovy=44.23872564716461`. Use the calibration position
+  as a camera center in the Genesis workspace frame with only the table-front
+  `y` offset applied, giving roughly `(-0.007, -1.177, 0.604)`. Do not reuse
+  the older transformed `z=1.35` placement; it frames the shirt too high and
+  hides more of the arms than the real RobotTwin view. The D455 look direction
+  is derived from the config quaternion by taking `-R[0, :]` as optical forward
+  and `R[1, :]` as image-left, which points through the shirt center at about
+  tabletop height. When recording, the script saves individual camera MP4s plus
   `left_mid_right.mp4`, a 60 FPS horizontal stack of `left_camera`,
   `head_camera`, and `right_camera`. Wrist cameras use a `1 cm` near plane;
   the default Genesis near plane clipped nearby finger geometry in wrist views
@@ -203,8 +202,12 @@ Do NOT ask when:
   front/back-closing gripper pairs with Piper-like `0.026 x 0.012 x 0.080 m`
   box geometry. A side-closing setup and a `10 mm` closed gap only wrinkled the
   shirt and slipped during lift.
-- The current scripted IPC sequence moves from all-zero qpos to two
-  shirt-centered contact targets at `x=-0.10` and `x=0.10`, approaches, lowers,
-  closes, pushes, lifts, shakes laterally, releases, then attempts a lower
-  second grasp. The center camera should stay high/wide enough to frame
-  `PIPER_BASE_LIFT_Z = TABLE_TOP_Z + 0.45`.
+- The current scripted IPC sequence follows the ClothesFoldingEnv EE phase
+  structure instead of the earlier Genesis-only shake and second-grasp routine:
+  all-zero settle, open, hold open, approach, lower to fingertip contact, hold
+  contact open, close, hold closed, push `0.20 m` along `+y`, lift to
+  `0.34 m`, hold lift, release, and retreat. The open gripper target is the
+  Isaac demo's `0.035 m`; the scripted contact, approach, and lift heights are
+  `0.220 m`, `0.250 m`, and `0.340 m`. Keep the ClothesFoldingEnv phase ratios
+  but use a Genesis-local `physics_steps_per_action` scale; the articulation
+  needs more than the Isaac minimum frame counts to settle onto the IK targets.

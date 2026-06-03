@@ -19,7 +19,9 @@ RIGHT_GRIPPER_DOFS = [14, 15]
 ALL_GRIPPER_DOFS = LEFT_GRIPPER_DOFS + RIGHT_GRIPPER_DOFS
 ALL_CONTROL_DOFS = ALL_ARM_DOFS + ALL_GRIPPER_DOFS
 
-OPEN_GRIPPER = np.array([0.049, -0.049, 0.049, -0.049], dtype=np.float32)
+CFE_OPENING = 0.035
+OPEN_GRIPPER = np.array([CFE_OPENING, -CFE_OPENING, CFE_OPENING, -CFE_OPENING], dtype=np.float32)
+CLOSED_GRIPPER = np.zeros(4, dtype=np.float32)
 ZERO_INITIAL_QPOS = np.zeros(16, dtype=np.float32)
 
 TABLE_CENTER = np.array([0.0, -0.48, 0.065], dtype=np.float32)
@@ -28,14 +30,16 @@ TABLE_TOP_Z = TABLE_CENTER[2] + TABLE_SIZE[2] * 0.5
 SHIRT_CENTER = np.array([0.0, -0.48, TABLE_TOP_Z + 0.010], dtype=np.float32)
 ROBOT_ROOT_POS = (-0.30, float(TABLE_CENTER[1] - TABLE_SIZE[1] * 0.5 - 0.02), 0.0)
 ROBOT_ROOT_EULER = (0.0, 0.0, 90.0)
-SHAKE_X_OFFSET = 0.025
+CFE_APPROACH_HEIGHT = 0.250
+CFE_FINGERTIP_CONTACT_HEIGHT = 0.220
+CFE_PUSH_DISTANCE = 0.200
+CFE_LIFT_HEIGHT = 0.340
 PIPER_BASE_START_Y = TABLE_CENTER[1] - TABLE_SIZE[1] * 0.5 - 0.06
 PIPER_BASE_CONTACT_Y = SHIRT_CENTER[1]
-PIPER_BASE_PUSH_Y = SHIRT_CENTER[1] + 0.06
-PIPER_BASE_HIGH_Z = TABLE_TOP_Z + 0.30
-PIPER_BASE_CONTACT_Z = TABLE_TOP_Z + 0.060
-PIPER_BASE_NEAR_TABLE_Z = TABLE_TOP_Z + 0.038
-PIPER_BASE_LIFT_Z = TABLE_TOP_Z + 0.45
+PIPER_BASE_PUSH_Y = SHIRT_CENTER[1] + CFE_PUSH_DISTANCE
+PIPER_BASE_HIGH_Z = CFE_APPROACH_HEIGHT
+PIPER_BASE_CONTACT_Z = CFE_FINGERTIP_CONTACT_HEIGHT
+PIPER_BASE_LIFT_Z = CFE_LIFT_HEIGHT
 PIPER_GRASP_BASE_XS = (-0.10, 0.10)
 PIPER_IK_LINKS = ("left_link7", "right_link8")
 DEX_TSHIRT_USD = Path(
@@ -101,12 +105,14 @@ PIPERX_WRIST_CAMERA_ORIGINS = {
         "rpy": "-0.002445405606400719 -1.216058912088991 1.5665889686029582",
     },
 }
-ROBOTWIN_HEAD_CAMERA = {
-    "position": np.array([0.01715773707478663, -0.4573830598833294, 1.353635842513242], dtype=np.float32),
-    "forward": np.array([0.03060834543810837, 0.5532082633105504, -0.8324804782062258], dtype=np.float32),
-    "left": np.array([-0.998951221970191, 0.04530567142677667, -0.006622103958085714], dtype=np.float32),
-}
-ROBOTWIN_HEAD_CAMERA_SCENE_OFFSET = np.array([0.0, TABLE_CENTER[1], 0.0], dtype=np.float32)
+ROBOTWIN_HEAD_CAMERA_POSITION = np.array(
+    [-0.007383059883329407, ROBOT_ROOT_POS[1] - 0.31715773707478656, 0.6036358425132415],
+    dtype=np.float32,
+)
+ROBOTWIN_HEAD_CAMERA_QUAT_XYZW = np.array(
+    [-0.6620275905116694, 0.6913463014325211, -0.2114074909007769, 0.19765281097906265],
+    dtype=np.float32,
+)
 ROBOTWIN_HEAD_CAMERA_FOVY = 44.23872564716461
 ROBOTWIN_CAMERA_RES = (392, 252)
 WRIST_CAMERA_RES = (640, 480)
@@ -458,10 +464,28 @@ def robotwin_camera_up(forward, left):
     return up / np.linalg.norm(up)
 
 
+def rotation_matrix_from_quat_xyzw(quat):
+    x, y, z, w = quat
+    return np.asarray(
+        (
+            (1.0 - 2.0 * y * y - 2.0 * z * z, 2.0 * x * y - 2.0 * z * w, 2.0 * x * z + 2.0 * y * w),
+            (2.0 * x * y + 2.0 * z * w, 1.0 - 2.0 * x * x - 2.0 * z * z, 2.0 * y * z - 2.0 * x * w),
+            (2.0 * x * z - 2.0 * y * w, 2.0 * y * z + 2.0 * x * w, 1.0 - 2.0 * x * x - 2.0 * y * y),
+        ),
+        dtype=float,
+    )
+
+
+def robotwin_head_camera_axes():
+    rotation = rotation_matrix_from_quat_xyzw(ROBOTWIN_HEAD_CAMERA_QUAT_XYZW)
+    forward = -rotation[0, :]
+    left = rotation[1, :]
+    return forward / np.linalg.norm(forward), left / np.linalg.norm(left)
+
+
 def add_robotwin_cameras(scene):
-    head_pos = ROBOTWIN_HEAD_CAMERA["position"] + ROBOTWIN_HEAD_CAMERA_SCENE_OFFSET
-    head_forward = ROBOTWIN_HEAD_CAMERA["forward"]
-    head_left = ROBOTWIN_HEAD_CAMERA["left"]
+    head_pos = ROBOTWIN_HEAD_CAMERA_POSITION
+    head_forward, head_left = robotwin_head_camera_axes()
     head_cam = scene.add_camera(
         res=ROBOTWIN_CAMERA_RES,
         pos=tuple(head_pos),
@@ -564,23 +588,24 @@ def solve_piper_qpos(robot, seed_qpos, target_positions, gripper_qpos):
     return target_qpos, float(np.linalg.norm(error.detach().cpu().numpy()[..., :3]))
 
 
-def build_piper_motion_targets(robot, neutral_qpos):
+def zero_open_qpos():
+    qpos = ZERO_INITIAL_QPOS.copy()
+    qpos[ALL_GRIPPER_DOFS] = OPEN_GRIPPER
+    return qpos
+
+
+def build_piper_motion_targets(robot):
     target_specs = (
-        ("high_open", PIPER_BASE_START_Y, PIPER_BASE_HIGH_Z, OPEN_GRIPPER, 0.0),
         ("approach_open", PIPER_BASE_CONTACT_Y, PIPER_BASE_HIGH_Z, OPEN_GRIPPER, 0.0),
         ("low_open", PIPER_BASE_CONTACT_Y, PIPER_BASE_CONTACT_Z, OPEN_GRIPPER, 0.0),
-        ("low_closed", PIPER_BASE_CONTACT_Y, PIPER_BASE_CONTACT_Z, np.zeros(4, dtype=np.float32), 0.0),
-        ("pushed_closed", PIPER_BASE_PUSH_Y, PIPER_BASE_CONTACT_Z, np.zeros(4, dtype=np.float32), 0.0),
-        ("lift", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, np.zeros(4, dtype=np.float32), 0.0),
+        ("low_closed", PIPER_BASE_CONTACT_Y, PIPER_BASE_CONTACT_Z, CLOSED_GRIPPER, 0.0),
+        ("pushed_closed", PIPER_BASE_PUSH_Y, PIPER_BASE_CONTACT_Z, CLOSED_GRIPPER, 0.0),
+        ("lift", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, CLOSED_GRIPPER, 0.0),
         ("release", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, OPEN_GRIPPER, 0.0),
-        ("second_low_open", PIPER_BASE_PUSH_Y, PIPER_BASE_NEAR_TABLE_Z, OPEN_GRIPPER, 0.0),
-        ("second_low_closed", PIPER_BASE_PUSH_Y, PIPER_BASE_NEAR_TABLE_Z, np.zeros(4, dtype=np.float32), 0.0),
-        ("second_lift", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, np.zeros(4, dtype=np.float32), 0.0),
-        ("second_release", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, OPEN_GRIPPER, 0.0),
         ("retreat", PIPER_BASE_START_Y, PIPER_BASE_LIFT_Z, OPEN_GRIPPER, 0.0),
     )
     targets = {}
-    seed_qpos = np.array(neutral_qpos, dtype=np.float32, copy=True)
+    seed_qpos = zero_open_qpos()
     for name, y, z, gripper_qpos, x_offset in target_specs:
         target_qpos, error_norm = solve_piper_qpos(
             robot,
@@ -597,21 +622,6 @@ def build_piper_motion_targets(robot, neutral_qpos):
 def interpolate_qpos(start_qpos, end_qpos, steps):
     for alpha in np.linspace(0.0, 1.0, steps, endpoint=True):
         yield (1.0 - alpha) * start_qpos + alpha * end_qpos
-
-
-def shake_qpos_states(robot, seed_qpos, base_y, base_z, amplitude, cycles, steps_per_half_cycle):
-    previous_qpos = seed_qpos
-    for cycle_index in range(cycles * 2):
-        direction = -1.0 if cycle_index % 2 else 1.0
-        target_qpos, _ = solve_piper_qpos(
-            robot,
-            previous_qpos,
-            piper_finger_target_positions(base_y, base_z, np.zeros(4, dtype=np.float32), direction * amplitude),
-            np.zeros(4, dtype=np.float32),
-        )
-        yield from interpolate_qpos(previous_qpos, target_qpos, steps_per_half_cycle)
-        previous_qpos = target_qpos
-    yield from interpolate_qpos(previous_qpos, seed_qpos, steps_per_half_cycle)
 
 
 def cloth_stats(shirt):
@@ -754,28 +764,25 @@ def main():
             np.array([87.0] * 12 + [300.0] * 4, dtype=np.float32),
             ALL_CONTROL_DOFS,
         )
-        piper_targets = build_piper_motion_targets(robot, neutral_qpos)
+        piper_targets = build_piper_motion_targets(robot)
     else:
         piper_targets = {}
 
+    physics_steps_per_action = max(1, int(35 * args.horizon_scale))
     phase_steps = {
         "settle": max(1, int(40 * args.horizon_scale)),
-        "move_from_zero": max(2, int(80 * args.horizon_scale)),
-        "approach": max(2, int(70 * args.horizon_scale)),
-        "lower": max(2, int(70 * args.horizon_scale)),
-        "close": max(2, int(55 * args.horizon_scale)),
-        "hold": max(1, int(35 * args.horizon_scale)),
-        "push": max(2, int(45 * args.horizon_scale)),
-        "lift": max(2, int(150 * args.horizon_scale)),
-        "high_hold": max(1, int(45 * args.horizon_scale)),
-        "shake": max(2, int(18 * args.horizon_scale)),
-        "release": max(2, int(35 * args.horizon_scale)),
-        "second_lower": max(2, int(85 * args.horizon_scale)),
-        "second_close": max(2, int(55 * args.horizon_scale)),
-        "second_hold": max(1, int(35 * args.horizon_scale)),
-        "second_lift": max(2, int(140 * args.horizon_scale)),
-        "second_release": max(2, int(35 * args.horizon_scale)),
-        "retreat": max(2, int(45 * args.horizon_scale)),
+        "open": max(physics_steps_per_action, 6),
+        "hold_open": max(physics_steps_per_action, 4),
+        "approach": max(physics_steps_per_action * 2, 12),
+        "lower": max(physics_steps_per_action, 5),
+        "hold_contact_open": max(physics_steps_per_action, 6),
+        "close": max(physics_steps_per_action, 6),
+        "hold_closed": max(physics_steps_per_action, 6),
+        "push": max(physics_steps_per_action * 3, 18),
+        "lift": max(physics_steps_per_action * 2, 12),
+        "hold_lift": max(physics_steps_per_action, 6),
+        "release": max(physics_steps_per_action, 6),
+        "retreat": max(physics_steps_per_action * 2, 12),
     }
 
     if args.record:
@@ -793,13 +800,23 @@ def main():
             [neutral_qpos] * phase_steps["settle"],
             args.record,
         )
+        open_start_qpos = zero_open_qpos()
         step_phase(
             scene,
             robot,
             shirt,
             cameras,
-            "zero_to",
-            interpolate_qpos(neutral_qpos, piper_targets["high_open"], phase_steps["move_from_zero"]),
+            "open",
+            interpolate_qpos(neutral_qpos, open_start_qpos, phase_steps["open"]),
+            args.record,
+        )
+        step_phase(
+            scene,
+            robot,
+            shirt,
+            cameras,
+            "holdopen",
+            [open_start_qpos] * phase_steps["hold_open"],
             args.record,
         )
         step_phase(
@@ -808,7 +825,7 @@ def main():
             shirt,
             cameras,
             "approach",
-            interpolate_qpos(piper_targets["high_open"], piper_targets["approach_open"], phase_steps["approach"]),
+            interpolate_qpos(open_start_qpos, piper_targets["approach_open"], phase_steps["approach"]),
             args.record,
         )
         step_phase(
@@ -818,6 +835,15 @@ def main():
             cameras,
             "lower",
             interpolate_qpos(piper_targets["approach_open"], piper_targets["low_open"], phase_steps["lower"]),
+            args.record,
+        )
+        step_phase(
+            scene,
+            robot,
+            shirt,
+            cameras,
+            "contact",
+            [piper_targets["low_open"]] * phase_steps["hold_contact_open"],
             args.record,
         )
         step_phase(
@@ -835,7 +861,7 @@ def main():
             shirt,
             cameras,
             "hold",
-            [piper_targets["low_closed"]] * phase_steps["hold"],
+            [piper_targets["low_closed"]] * phase_steps["hold_closed"],
             args.record,
         )
         step_phase(
@@ -862,24 +888,7 @@ def main():
             shirt,
             cameras,
             "hi_hold",
-            [piper_targets["lift"]] * phase_steps["high_hold"],
-            args.record,
-        )
-        step_phase(
-            scene,
-            robot,
-            shirt,
-            cameras,
-            "shake",
-            shake_qpos_states(
-                robot,
-                piper_targets["lift"],
-                PIPER_BASE_PUSH_Y,
-                PIPER_BASE_LIFT_Z,
-                SHAKE_X_OFFSET,
-                2,
-                phase_steps["shake"],
-            ),
+            [piper_targets["lift"]] * phase_steps["hold_lift"],
             args.record,
         )
         step_phase(
@@ -896,70 +905,9 @@ def main():
             robot,
             shirt,
             cameras,
-            "re_lower",
-            interpolate_qpos(
-                piper_targets["release"],
-                piper_targets["second_low_open"],
-                phase_steps["second_lower"],
-            ),
-            args.record,
-        )
-        step_phase(
-            scene,
-            robot,
-            shirt,
-            cameras,
-            "re_close",
-            interpolate_qpos(
-                piper_targets["second_low_open"],
-                piper_targets["second_low_closed"],
-                phase_steps["second_close"],
-            ),
-            args.record,
-        )
-        step_phase(
-            scene,
-            robot,
-            shirt,
-            cameras,
-            "re_hold",
-            [piper_targets["second_low_closed"]] * phase_steps["second_hold"],
-            args.record,
-        )
-        step_phase(
-            scene,
-            robot,
-            shirt,
-            cameras,
-            "re_lift",
-            interpolate_qpos(
-                piper_targets["second_low_closed"],
-                piper_targets["second_lift"],
-                phase_steps["second_lift"],
-            ),
-            args.record,
-        )
-        step_phase(
-            scene,
-            robot,
-            shirt,
-            cameras,
-            "re_rel",
-            interpolate_qpos(
-                piper_targets["second_lift"],
-                piper_targets["second_release"],
-                phase_steps["second_release"],
-            ),
-            args.record,
-        )
-        step_phase(
-            scene,
-            robot,
-            shirt,
-            cameras,
             "retreat",
             interpolate_qpos(
-                piper_targets["second_release"],
+                piper_targets["release"],
                 piper_targets["retreat"],
                 phase_steps["retreat"],
             ),
