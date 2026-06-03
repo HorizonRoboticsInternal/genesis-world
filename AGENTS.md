@@ -237,17 +237,23 @@ Do NOT ask when:
   shirt and slipped during lift.
 - The current scripted IPC sequence follows the ClothesFoldingEnv EE phase
   structure instead of the earlier Genesis-only shake and second-grasp routine:
-  all-zero settle, open, hold open, approach, lower to fingertip contact, hold
-  contact open, close, hold closed, push `0.20 m` along `+y`, lift to
-  `0.34 m`, hold lift, release, and retreat. The open gripper target is the
-  Isaac demo's `0.035 m`; the scripted approach and lift heights remain
-  `0.250 m` and `0.340 m`. Do not reuse the Isaac fingertip-contact height
-  `0.220 m` directly in Genesis: with this table and shirt mesh, that leaves
-  the IPC finger collision centers hovering above the settled cloth. Use the
-  Genesis-local contact target `TABLE_TOP_Z + 0.018` so the fingers lower near
-  tabletop level before closing. Keep the ClothesFoldingEnv phase ratios but
-  use a Genesis-local `physics_steps_per_action` scale; the articulation needs
-  more than the Isaac minimum frame counts to settle onto the IK targets. In
-  particular, do not scale the lower/contact-open phases below 35 Genesis steps:
-  closing before the arm settles can make the gripper appear to close above the
-  shirt even when the IK target itself is at table level.
+  open-start approach, lower to fingertip contact, hold contact open, close,
+  hold closed, push `0.20 m` along `+y`, lift to `0.46 m`, hold lift, release,
+  and retreat. Do not add a second squeeze/push/lift phase after the push; it
+  can look like a second manipulation attempt in the recording. The open
+  gripper target is the Isaac demo's `0.035 m`, and the scripted approach/lift
+  heights are `0.250 m` and `0.460 m`. Do not reuse the Isaac
+  fingertip-contact height `0.220 m` directly in Genesis: with this table and
+  shirt mesh, that leaves the IPC finger collision centers hovering above the
+  settled cloth. Use the Genesis-local contact target `TABLE_TOP_Z + 0.018` so
+  the fingers lower near tabletop level before closing. Keep the
+  ClothesFoldingEnv phase ratios but use a Genesis-local
+  `physics_steps_per_action` scale; the articulation needs more than the Isaac
+  minimum frame counts to settle onto the IK targets.
+- For visual room context around the Genesis IPC table, avoid adding far walls,
+  ceiling panels, or light panels as regular `scene.add_entity()` boxes. Even
+  with `collision=False`, they still become extra `RigidEntity`s and locally
+  caused IPC/CUDA kernel compilation failure. Draw noninteractive room geometry
+  after `scene.build()` with persistent visualizer debug boxes instead; IPC
+  then sees only the table, shirt, and robot while the cameras still render the
+  three light-gray walls, 3 m ceiling, and under-ceiling light panels.

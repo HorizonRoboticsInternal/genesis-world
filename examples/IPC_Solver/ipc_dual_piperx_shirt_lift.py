@@ -43,6 +43,12 @@ ZERO_INITIAL_QPOS = zero_initial_qpos(CLOSED_OPENING)
 TABLE_CENTER = np.array([0.0, -0.48, 0.065], dtype=np.float32)
 TABLE_SIZE = np.array([1.64, 0.72, 0.13], dtype=np.float32)
 TABLE_TOP_Z = TABLE_CENTER[2] + TABLE_SIZE[2] * 0.5
+ROOM_WALL_DISTANCE_FROM_TABLE = 1.0
+ROOM_WALL_THICKNESS = 0.04
+ROOM_WALL_CORNER_GAP = 0.01
+ROOM_CEILING_Z = 3.0
+ROOM_WALL_COLOR = (0.72, 0.74, 0.74, 1.0)
+ROOM_LIGHT_PANEL_COLOR = (0.92, 0.92, 0.86, 1.0)
 SHIRT_CENTER = np.array([0.0, -0.48, TABLE_TOP_Z + 0.010], dtype=np.float32)
 PIPER_SHOULDER_CENTER_Z_IN_ROOT = 0.123
 REAL_SHOULDER_CENTER_ABOVE_TABLE = 0.130
@@ -465,6 +471,52 @@ def resolve_tshirt_obj(args):
     return shirt_obj
 
 
+def table_room_specs():
+    table_min = TABLE_CENTER - 0.5 * TABLE_SIZE
+    table_max = TABLE_CENTER + 0.5 * TABLE_SIZE
+    x_min = float(table_min[0] - ROOM_WALL_DISTANCE_FROM_TABLE)
+    x_max = float(table_max[0] + ROOM_WALL_DISTANCE_FROM_TABLE)
+    y_min = float(table_min[1] - ROOM_WALL_DISTANCE_FROM_TABLE)
+    y_max = float(table_max[1] + ROOM_WALL_DISTANCE_FROM_TABLE)
+    wall_center_z = 0.5 * ROOM_CEILING_Z
+    wall_height = ROOM_CEILING_Z
+    side_wall_y = 0.5 * (y_min + y_max)
+    side_wall_length = y_max - y_min - ROOM_WALL_CORNER_GAP
+    side_wall_size = (ROOM_WALL_THICKNESS, side_wall_length, wall_height)
+    back_wall_size = (x_max - x_min - 2.0 * ROOM_WALL_CORNER_GAP, ROOM_WALL_THICKNESS, wall_height)
+    wall_specs = (
+        ((x_min - 0.5 * ROOM_WALL_THICKNESS, side_wall_y, wall_center_z), side_wall_size),
+        ((x_max + 0.5 * ROOM_WALL_THICKNESS, side_wall_y, wall_center_z), side_wall_size),
+        ((0.5 * (x_min + x_max), y_max + 0.5 * ROOM_WALL_THICKNESS, wall_center_z), back_wall_size),
+    )
+    ceiling_size = (x_max - x_min + 2.0 * ROOM_WALL_THICKNESS, y_max - y_min + 2.0 * ROOM_WALL_THICKNESS, ROOM_WALL_THICKNESS)
+    ceiling_spec = (
+        (0.5 * (x_min + x_max), 0.5 * (y_min + y_max), ROOM_CEILING_Z),
+        ceiling_size,
+    )
+    light_specs = tuple(
+        ((light_x, TABLE_CENTER[1] + 0.05, ROOM_CEILING_Z - 0.035), (0.55, 0.35, 0.02))
+        for light_x in (-0.45, 0.45)
+    )
+    return wall_specs, ceiling_spec, light_specs
+
+
+def draw_solid_debug_box(scene, pos, size, color):
+    half_size = 0.5 * np.array(size, dtype=np.float32)
+    center = np.array(pos, dtype=np.float32)
+    bounds = np.stack((center - half_size, center + half_size), axis=0)
+    scene.draw_debug_box(bounds, color=color, wireframe=False)
+
+
+def draw_table_room(scene):
+    wall_specs, ceiling_spec, light_specs = table_room_specs()
+    for pos, size in wall_specs:
+        draw_solid_debug_box(scene, pos, size, ROOM_WALL_COLOR)
+    draw_solid_debug_box(scene, ceiling_spec[0], ceiling_spec[1], ROOM_WALL_COLOR)
+    for pos, size in light_specs:
+        draw_solid_debug_box(scene, pos, size, ROOM_LIGHT_PANEL_COLOR)
+
+
 def make_scene(args, shirt_mesh_path, robot_urdf_path):
     coupler_options = (
         None
@@ -487,6 +539,15 @@ def make_scene(args, shirt_mesh_path, robot_urdf_path):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=SIM_DT, substeps=SIM_SUBSTEPS, gravity=(0.0, 0.0, -9.81)),
         coupler_options=coupler_options,
+        vis_options=gs.options.VisOptions(
+            ambient_light=(0.34, 0.34, 0.34),
+            background_color=(0.78, 0.82, 0.84),
+            lights=(
+                gs.options.vis.PointLight(pos=(-0.45, TABLE_CENTER[1] + 0.05, ROOM_CEILING_Z - 0.12), color=(1.0, 0.96, 0.88), intensity=18.0),
+                gs.options.vis.PointLight(pos=(0.45, TABLE_CENTER[1] + 0.05, ROOM_CEILING_Z - 0.12), color=(1.0, 0.96, 0.88), intensity=18.0),
+                gs.options.vis.DirectionalLight(dir=(0.2, -0.3, -1.0), color=(1.0, 1.0, 1.0), intensity=1.2),
+            ),
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.16, -1.30, 0.72),
             camera_lookat=(0.0, -0.48, 0.13),
@@ -752,7 +813,7 @@ def should_record_phase(args, phase):
         return False
     if not args.focus_grasp:
         return True
-    return phase in {"lower", "contact", "close", "hold", "push", "squeeze", "lift", "hi_hold", "release", "retreat"}
+    return phase in {"lower", "contact", "close", "hold", "push", "lift", "hi_hold", "release", "retreat"}
 
 
 def save_camera_recordings(camera_items, output_dir, video_path):
@@ -811,7 +872,8 @@ def step_phase(
             robot.control_dofs_position(qpos_target[ALL_CONTROL_DOFS], ALL_CONTROL_DOFS)
         scene.step()
         record_frame(cameras, record)
-        if i == 0 or (i + 1) % log_interval == 0:
+        is_final_step = i + 1 == len(qpos_targets)
+        if i == 0 or is_final_step or (i + 1) % log_interval == 0:
             stats = cloth_stats(shirt)
             if robot is None:
                 finger_z = float("nan")
@@ -850,6 +912,7 @@ def main():
     if robot is not None:
         set_robot_init_qpos(robot, initial_qpos)
     scene.build()
+    draw_table_room(scene)
     if args.init_only:
         print(f"IPC init probe succeeded: closed_opening={args.closed_opening:.6f}")
         return
@@ -877,7 +940,6 @@ def main():
         "close": max(physics_steps_per_action * 2, 9),
         "hold_closed": max(physics_steps_per_action * 4, 18),
         "push": max(physics_steps_per_action * 3, 9),
-        "pre_lift_squeeze": max(physics_steps_per_action * 10, 45),
         "lift": max(physics_steps_per_action * 2, 6),
         "hold_lift": max(physics_steps_per_action * 2, 6),
         "release": max(physics_steps_per_action * 2, 6),
@@ -943,15 +1005,6 @@ def main():
             "push",
             interpolate_qpos(piper_targets["low_closed"], piper_targets["pushed_closed"], phase_steps["push"]),
             should_record_phase(args, "push"),
-        )
-        step_phase(
-            scene,
-            robot,
-            shirt,
-            cameras,
-            "squeeze",
-            [piper_targets["pushed_closed"]] * phase_steps["pre_lift_squeeze"],
-            should_record_phase(args, "squeeze"),
         )
         step_phase(
             scene,
