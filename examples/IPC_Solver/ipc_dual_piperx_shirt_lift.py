@@ -67,6 +67,8 @@ PIPER_BASE_HIGH_Z = CFE_APPROACH_HEIGHT
 PIPER_BASE_CONTACT_Z = GENESIS_FINGERTIP_CONTACT_HEIGHT
 PIPER_BASE_LIFT_Z = CFE_LIFT_HEIGHT
 PIPER_GRASP_BASE_XS = (-0.10, 0.10)
+PIPER_SHAKE_X_OFFSET = 0.040
+PIPER_SHAKE_CYCLES = 4
 PIPER_IK_LINKS = ("left_link7", "right_link8")
 DEX_TSHIRT_USD = Path(
     "/home/horizon/DexGarmentLab/Assets/Garment/Tops/"
@@ -124,6 +126,7 @@ PIPER_IPC_COUP_FRICTION = 12.0
 PIPER_GRIPPER_KP = 5000.0
 PIPER_GRIPPER_KV = 500.0
 PIPER_GRIPPER_FORCE_LIMIT = 3000.0
+GRIPPER_CLOTH_PROXIMITY_RADIUS = 0.060
 GENESIS_IPC_CLOTH_KWARGS = {
     "E": 6e4,
     "nu": 0.49,
@@ -714,6 +717,43 @@ def piper_gripper_diagnostics(robot):
     }
 
 
+def cloth_particle_positions(shirt):
+    if hasattr(shirt, "get_particles_pos"):
+        poss = shirt.get_particles_pos().detach().cpu().numpy()
+    else:
+        state = shirt.get_state()
+        poss = state.pos.detach().cpu().numpy()
+    if poss.ndim == 3:
+        poss = poss[0]
+    return poss[poss[:, 2] < 10.0]
+
+
+def cloth_particle_positions_and_sentinel_count(shirt):
+    if hasattr(shirt, "get_particles_pos"):
+        poss = shirt.get_particles_pos().detach().cpu().numpy()
+    else:
+        state = shirt.get_state()
+        poss = state.pos.detach().cpu().numpy()
+    if poss.ndim == 3:
+        poss = poss[0]
+    sentinel_mask = poss[:, 2] < 10.0
+    return poss[sentinel_mask], int((~sentinel_mask).sum())
+
+
+def gripper_cloth_proximity_diagnostics(robot, shirt):
+    finger_centers = piper_finger_collision_centers(robot)
+    poss = cloth_particle_positions(shirt)
+    diagnostics = {}
+    for side, side_centers in (("left", finger_centers[:2]), ("right", finger_centers[2:])):
+        distances = np.linalg.norm(poss[:, None, :] - side_centers[None, :, :], axis=2).min(axis=1)
+        close_mask = distances < GRIPPER_CLOTH_PROXIMITY_RADIUS
+        close_poss = poss[close_mask]
+        diagnostics[f"{side}_near_particles"] = int(close_mask.sum())
+        diagnostics[f"{side}_nearest_cloth"] = float(distances.min())
+        diagnostics[f"{side}_near_max_z"] = float(close_poss[:, 2].max()) if close_poss.size else float("nan")
+    return diagnostics
+
+
 def piper_finger_target_positions(y, z, gripper_qpos, x_offset=0.0):
     left_x, right_x = PIPER_GRASP_BASE_XS
     return np.asarray(
@@ -760,6 +800,9 @@ def build_piper_motion_targets(robot, closed_gripper):
         ("low_closed", PIPER_BASE_CONTACT_Y, PIPER_BASE_CONTACT_Z, closed_gripper, 0.0),
         ("pushed_closed", PIPER_BASE_PUSH_Y, PIPER_BASE_CONTACT_Z, closed_gripper, 0.0),
         ("lift", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, closed_gripper, 0.0),
+        ("shake_left", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, closed_gripper, -PIPER_SHAKE_X_OFFSET),
+        ("shake_right", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, closed_gripper, PIPER_SHAKE_X_OFFSET),
+        ("shake_center", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, closed_gripper, 0.0),
         ("release", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, OPEN_GRIPPER, 0.0),
         ("retreat", PIPER_BASE_START_Y, PIPER_BASE_LIFT_Z, OPEN_GRIPPER, 0.0),
     )
@@ -783,23 +826,32 @@ def interpolate_qpos(start_qpos, end_qpos, steps):
         yield (1.0 - alpha) * start_qpos + alpha * end_qpos
 
 
+def concatenate_interpolated_qpos(targets, target_names, steps_per_segment):
+    for start_name, end_name in zip(target_names[:-1], target_names[1:]):
+        yield from interpolate_qpos(targets[start_name], targets[end_name], steps_per_segment)
+
+
+def repeated_shake_qpos(targets, cycles, steps_per_segment):
+    for _ in range(cycles):
+        yield from concatenate_interpolated_qpos(
+            targets,
+            ("lift", "shake_left", "shake_right", "shake_left", "shake_center"),
+            steps_per_segment,
+        )
+
+
 def cloth_stats(shirt):
-    if hasattr(shirt, "get_particles_pos"):
-        poss = shirt.get_particles_pos().detach().cpu().numpy()
-    else:
-        state = shirt.get_state()
-        poss = state.pos.detach().cpu().numpy()
-    if poss.ndim == 3:
-        poss = poss[0]
-    sentinel_mask = poss[:, 2] < 10.0
-    poss = poss[sentinel_mask]
+    poss, sentinel_count = cloth_particle_positions_and_sentinel_count(shirt)
     z_values = poss[:, 2]
     centroid = poss.mean(axis=0)
     return {
         "centroid": centroid,
         "min_z": float(z_values.min()),
         "max_z": float(z_values.max()),
-        "sentinel_count": int((~sentinel_mask).sum()),
+        "span_x": float(poss[:, 0].max() - poss[:, 0].min()),
+        "span_y": float(poss[:, 1].max() - poss[:, 1].min()),
+        "std_z": float(z_values.std()),
+        "sentinel_count": sentinel_count,
     }
 
 
@@ -827,7 +879,18 @@ def should_record_phase(args, phase):
         return False
     if not args.focus_grasp:
         return True
-    return phase in {"lower", "contact", "close", "hold", "push", "lift", "hi_hold", "release", "retreat"}
+    return phase in {
+        "lower",
+        "contact",
+        "close",
+        "hold",
+        "push",
+        "lift",
+        "hi_hold",
+        "shake",
+        "release",
+        "retreat",
+    }
 
 
 def save_camera_recordings(camera_items, output_dir, video_path):
@@ -899,17 +962,30 @@ def step_phase(
                     "left_gap": float("nan"),
                     "right_gap": float("nan"),
                 }
+                proximity = {
+                    "left_near_particles": 0,
+                    "right_near_particles": 0,
+                    "left_nearest_cloth": float("nan"),
+                    "right_nearest_cloth": float("nan"),
+                    "left_near_max_z": float("nan"),
+                    "right_near_max_z": float("nan"),
+                }
             else:
                 diagnostics = piper_gripper_diagnostics(robot)
+                proximity = gripper_cloth_proximity_diagnostics(robot, shirt)
                 finger_z = 0.5 * (diagnostics["left_finger_z"] + diagnostics["right_finger_z"])
                 grip_gap = 0.5 * (diagnostics["left_gap"] + diagnostics["right_gap"])
             print(
                 f"[{phase:>8s}] step={i + 1:04d} "
                 f"centroid=({stats['centroid'][0]:+.3f}, {stats['centroid'][1]:+.3f}, {stats['centroid'][2]:+.3f}) "
                 f"z_min={stats['min_z']:.3f} z_max={stats['max_z']:.3f} "
+                f"span=({stats['span_x']:.3f},{stats['span_y']:.3f}) z_std={stats['std_z']:.4f} "
                 f"finger_z={finger_z:.3f} grip_gap={grip_gap:.4f} "
                 f"left_z={diagnostics['left_finger_z']:.3f} right_z={diagnostics['right_finger_z']:.3f} "
                 f"left_gap={diagnostics['left_gap']:.4f} right_gap={diagnostics['right_gap']:.4f} "
+                f"left_near={proximity['left_near_particles']} right_near={proximity['right_near_particles']} "
+                f"left_d={proximity['left_nearest_cloth']:.3f} right_d={proximity['right_nearest_cloth']:.3f} "
+                f"left_near_z={proximity['left_near_max_z']:.3f} right_near_z={proximity['right_near_max_z']:.3f} "
                 f"sentinel={stats['sentinel_count']}"
             )
 
@@ -966,9 +1042,11 @@ def main():
         "push": max(physics_steps_per_action * 3, 9),
         "lift": max(physics_steps_per_action * 10, 50),
         "hold_lift": max(physics_steps_per_action * 8, 40),
+        "shake_segment": max(physics_steps_per_action * 3, 12),
         "release": max(physics_steps_per_action * 2, 6),
         "retreat": max(physics_steps_per_action * 5, 18),
     }
+    phase_steps["fast_shake_segment"] = max(phase_steps["shake_segment"] // 4, 3)
 
     if args.record:
         for camera in cameras:
@@ -1047,6 +1125,19 @@ def main():
             "hi_hold",
             [piper_targets["lift"]] * phase_steps["hold_lift"],
             should_record_phase(args, "hi_hold"),
+        )
+        step_phase(
+            scene,
+            robot,
+            shirt,
+            cameras,
+            "shake",
+            repeated_shake_qpos(
+                piper_targets,
+                PIPER_SHAKE_CYCLES,
+                phase_steps["fast_shake_segment"],
+            ),
+            should_record_phase(args, "shake"),
         )
         step_phase(
             scene,

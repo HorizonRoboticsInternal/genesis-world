@@ -252,7 +252,25 @@ Do NOT ask when:
   (`0.0586 m` versus `0.0827 m` max lift over initial), so visible one-sided
   slipping should be debugged first through pre-lift clamp quality, gripper
   authority, and left/right gripper-gap diagnostics rather than lift speed
-  alone. The open gripper target is the Isaac demo's `0.035 m`, and the
+  alone. For post-lift shaking, keep the grippers closed and use per-arm cloth
+  proximity diagnostics when investigating slip: compare left/right gripper
+  gap, nearby particle counts, nearest cloth distance, and max height of nearby
+  cloth. A later `0.040 m` world-X shake recording kept both grippers closed
+  and retained similar left/right nearby-particle counts through shake, with
+  the major drop occurring after the explicit release command. The current
+  stress-test shake repeats the centered left/right/left/center pattern four
+  times with one-quarter segment duration, so it has four times the cycles and
+  four times the lateral speed while keeping the phase duration about the same.
+  The open gripper target is the Isaac demo's `0.035 m`; increasing it by 50%
+  to `0.0525 m` caused a Genesis joint-limit warning and left the gripper
+  around `0.0506 m` even after close/hold, reducing actual clamping and causing
+  one-sided slip during fast shake. Do not use that wider opening as the
+  default unless the imported gripper limits/drive mapping are changed. The
+  close phase alone does not produce a strong shirt buckle: in the local
+  default-opening fast-shake run, close changed cloth `span_y` only from about
+  `0.379` to `0.375` and kept `z_std` around `0.007`. The larger wrinkle/fold
+  signal appeared during push/lift, where `span_y` contracted and `z_std`
+  increased. The
   scripted approach/lift heights are
   `0.250 m` and `0.460 m`. Do not reuse the Isaac
   fingertip-contact height `0.220 m` directly in Genesis: with this table and
