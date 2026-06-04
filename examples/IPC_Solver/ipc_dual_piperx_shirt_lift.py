@@ -22,7 +22,9 @@ ALL_CONTROL_DOFS = ALL_ARM_DOFS + ALL_GRIPPER_DOFS
 SIM_DT = 0.02
 SIM_SUBSTEPS = 4
 RECORDING_FPS = int(round(1.0 / SIM_DT))
-CFE_OPENING = 0.035
+BASE_OPENING = 0.035
+CALIBRATED_WIDE_OPENING = 0.025
+CFE_OPENING = CALIBRATED_WIDE_OPENING
 CLOSED_OPENING = 0.0
 
 
@@ -36,7 +38,6 @@ def zero_initial_qpos(closed_opening):
     return qpos
 
 
-OPEN_GRIPPER = gripper_qpos(CFE_OPENING)
 CLOSED_GRIPPER = gripper_qpos(CLOSED_OPENING)
 ZERO_INITIAL_QPOS = zero_initial_qpos(CLOSED_OPENING)
 
@@ -105,27 +106,67 @@ GRIPPER_FINGER_LINK8_COLLISION_CENTER = (
     GRIPPER_FINGER_BASE_CENTER_Y + GRIPPER_FINGER_COVER_CENTER_SHIFT,
     -0.012 + GRIPPER_FINGER_COVER_CLOSING_SHIFT,
 )
-# Piper-X finger links are rotated relative to the gripper base; link-local Y is
-# the useful finger length in Genesis, while link-local Z is the
-# closing-direction thickness. Keep the boxes thin enough to avoid closed-finger
-# self-intersections, similar to Panda's non-overlap fingertip pad boxes.
-GENESIS_FINGER_BODY_COLLISION_BOX_SIZE = (0.020, 0.065, 0.010)
-GENESIS_LINK7_BODY_COLLISION_CENTER = (0.0, -0.027, -0.018)
-GENESIS_LINK8_BODY_COLLISION_CENTER = (0.0, 0.027, -0.018)
-# Match the cover collision boxes to the STL visual bounds. The old cover
-# collision was a long, thin proxy centered near the cover tip; the visual mesh
-# is shorter, thicker, and centered close to the finger link frame.
-GENESIS_FINGER_COVER_COLLISION_BOX_SIZE = (0.04370902348, 0.07000000000, 0.01400000000)
-GENESIS_LINK7_COVER_COLLISION_CENTER = (0.0, -0.000031894, -0.009)
-GENESIS_LINK8_COVER_COLLISION_CENTER = (0.0, 0.000031894, -0.009)
-PIPER_IK_LOCAL_POINTS = (GENESIS_LINK7_COVER_COLLISION_CENTER, GENESIS_LINK8_COVER_COLLISION_CENTER)
 GRIPPER_FINGER_LINK7_COVER_RPY = (0.0, math.pi, math.pi)
 GRIPPER_FINGER_LINK8_COVER_RPY = (0.0, math.pi, 0.0)
+# Piper-X finger links are rotated relative to the gripper base; link-local Z is
+# the closing direction for both finger-body and cover boxes. Keep the blue body
+# proxies small and behind the fingertip so the red cover pad is the first
+# contact surface during close.
+GENESIS_FINGER_BODY_COLLISION_BOX_SIZE = (0.014, 0.030, 0.006)
+GENESIS_LINK7_BODY_COLLISION_CENTER = (0.0, -0.050, -0.018)
+GENESIS_LINK8_BODY_COLLISION_CENTER = (0.0, 0.050, -0.018)
+GENESIS_FINGER_COVER_COLLISION_BOX_SIZE = (0.020, 0.060, 0.006)
+GENESIS_FINGER_COVER_VISUAL_HALF_Z = 0.5 * (
+    GRIPPER_FINGER_COVER_MESH_MAX[2] - GRIPPER_FINGER_COVER_MESH_MIN[2]
+)
+GENESIS_FINGER_COVER_INNER_FACE_MARGIN = 0.0005
+GENESIS_FINGER_COVER_VISUAL_REFERENCE_THICKNESS_Z = 0.01790
+GENESIS_FINGER_COVER_VISUAL_CENTER_Z = (
+    GRIPPER_FINGER_LINK7_COLLISION_CENTER[2]
+    + 0.5 * GENESIS_FINGER_COVER_VISUAL_REFERENCE_THICKNESS_Z
+    - GENESIS_FINGER_COVER_INNER_FACE_MARGIN
+    - GENESIS_FINGER_COVER_VISUAL_HALF_Z
+)
+GENESIS_FINGER_COVER_INNER_FACE_Z = (
+    GENESIS_FINGER_COVER_VISUAL_CENTER_Z
+    + GENESIS_FINGER_COVER_VISUAL_HALF_Z
+    + GENESIS_FINGER_COVER_INNER_FACE_MARGIN
+)
+GENESIS_FINGER_COVER_COLLISION_CENTER_Z = (
+    GENESIS_FINGER_COVER_INNER_FACE_Z
+    - 0.5 * GENESIS_FINGER_COVER_COLLISION_BOX_SIZE[2]
+)
+GRIPPER_FINGER_LINK7_COVER_VISUAL_CENTER = (
+    GRIPPER_FINGER_LINK7_COLLISION_CENTER[0],
+    GRIPPER_FINGER_LINK7_COLLISION_CENTER[1],
+    GENESIS_FINGER_COVER_VISUAL_CENTER_Z,
+)
+GRIPPER_FINGER_LINK8_COVER_VISUAL_CENTER = (
+    GRIPPER_FINGER_LINK8_COLLISION_CENTER[0],
+    GRIPPER_FINGER_LINK8_COLLISION_CENTER[1],
+    GENESIS_FINGER_COVER_VISUAL_CENTER_Z,
+)
+GENESIS_LINK7_COVER_COLLISION_CENTER = (
+    0.0,
+    -0.000031894,
+    GENESIS_FINGER_COVER_COLLISION_CENTER_Z,
+)
+GENESIS_LINK8_COVER_COLLISION_CENTER = (
+    0.0,
+    0.000031894,
+    GENESIS_FINGER_COVER_COLLISION_CENTER_Z,
+)
+PIPER_IK_LOCAL_POINTS = (GENESIS_LINK7_COVER_COLLISION_CENTER, GENESIS_LINK8_COVER_COLLISION_CENTER)
 PIPER_COUPLED_FINGER_LINKS = ("left_link7", "left_link8", "right_link7", "right_link8")
 PIPER_IPC_COUP_FRICTION = 12.0
-PIPER_GRIPPER_KP = 5000.0
-PIPER_GRIPPER_KV = 500.0
-PIPER_GRIPPER_FORCE_LIMIT = 3000.0
+PIPER_GRIPPER_KP = 30000.0
+PIPER_GRIPPER_KV = 3000.0
+PIPER_GRIPPER_FORCE_LIMIT = 50000.0
+PIPER_WIDE_OPEN_CLOSE_DWELL_SCALE = 3.0
+FINGER_COVER_VISUAL_ALPHA = 1.0
+FINGER_COVER_DEBUG_VISUAL_ALPHA = 0.5
+FINGER_BODY_COLLISION_DEBUG_COLOR = (0.0, 0.65, 1.0, 0.55)
+FINGER_COVER_COLLISION_DEBUG_COLOR = (1.0, 0.2, 0.0, 0.65)
 GRIPPER_CLOTH_PROXIMITY_RADIUS = 0.060
 GENESIS_IPC_CLOTH_KWARGS = {
     "E": 6e4,
@@ -195,6 +236,12 @@ def parse_args():
     )
     parser.add_argument("--hide-piper", action="store_true", default=False, help=argparse.SUPPRESS)
     parser.add_argument(
+        "--show-finger-collision-boxes",
+        action="store_true",
+        default=False,
+        help="Render colored finger collision-box visuals and half-transparent finger-cover STL visuals.",
+    )
+    parser.add_argument(
         "--shirt-scale",
         type=float,
         default=0.55,
@@ -213,10 +260,26 @@ def parse_args():
         help="When recording, render only lower/contact/close/push/lift/release phases for faster grasp tuning.",
     )
     parser.add_argument(
+        "--gripper-close-diagnostic",
+        action="store_true",
+        default=False,
+        help="Record only fixed-arm gripper close/hold motion, without the shirt.",
+    )
+    parser.add_argument(
         "--closed-opening",
         type=float,
         default=CLOSED_OPENING,
         help="Residual per-finger closed gripper opening, in meters.",
+    )
+    parser.add_argument(
+        "--open-opening",
+        type=float,
+        default=CFE_OPENING,
+        help=(
+            "Per-finger open gripper target, in meters. In the IPC-coupled "
+            "Piper scene, 0.025 currently gives a wider visual cover gap than "
+            "the older 0.035 command."
+        ),
     )
     parser.add_argument(
         "--init-only",
@@ -233,7 +296,7 @@ def should_show_piper(args):
     return bool(args.show_piper and not args.hide_piper)
 
 
-def make_piper_urdf(path):
+def make_piper_urdf(path, show_finger_collision_boxes=False):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if not PIPER_DUAL_URDF.is_file():
@@ -248,8 +311,8 @@ def make_piper_urdf(path):
             mesh.set("filename", str(source_root / filename))
 
     add_piperx_wrist_camera_links(root)
-    apply_gripper_finger_covers(root)
-    apply_simple_gripper_collisions(root)
+    apply_gripper_finger_covers(root, transparent=show_finger_collision_boxes)
+    apply_simple_gripper_collisions(root, show_debug_visuals=show_finger_collision_boxes)
 
     tree.write(path, encoding="utf-8", xml_declaration=True)
     return path
@@ -306,7 +369,7 @@ def finger_cover_visual_origin(target_center, rpy, cover_base_y):
     return tuple(float(value) for value in origin)
 
 
-def add_finger_cover_visual(root, link_name, target_center, rpy, cover_base_y):
+def add_finger_cover_visual(root, link_name, target_center, rpy, cover_base_y, alpha=FINGER_COVER_VISUAL_ALPHA):
     link_element = root.find(f"./link[@name='{link_name}']")
     if link_element is None:
         raise RuntimeError(f"Missing URDF link for finger-cover visual: {link_name}")
@@ -330,26 +393,29 @@ def add_finger_cover_visual(root, link_name, target_center, rpy, cover_base_y):
         },
     )
     material_element = ET.SubElement(visual_element, "material", {"name": "Black"})
-    ET.SubElement(material_element, "color", {"rgba": "0.01 0.01 0.01 1"})
+    ET.SubElement(material_element, "color", {"rgba": f"0.01 0.01 0.01 {alpha:.3f}"})
 
 
-def apply_gripper_finger_covers(root):
+def apply_gripper_finger_covers(root, transparent=False):
     if not GRIPPER_FINGER_COVER_STL.is_file():
         raise FileNotFoundError(f"Missing gripper finger cover STL: {GRIPPER_FINGER_COVER_STL}")
+    cover_alpha = FINGER_COVER_DEBUG_VISUAL_ALPHA if transparent else FINGER_COVER_VISUAL_ALPHA
     for side in ("left", "right"):
         add_finger_cover_visual(
             root,
             f"{side}_link7",
-            GRIPPER_FINGER_LINK7_COLLISION_CENTER,
+            GRIPPER_FINGER_LINK7_COVER_VISUAL_CENTER,
             GRIPPER_FINGER_LINK7_COVER_RPY,
             GRIPPER_FINGER_LINK7_COVER_BASE_Y,
+            alpha=cover_alpha,
         )
         add_finger_cover_visual(
             root,
             f"{side}_link8",
-            GRIPPER_FINGER_LINK8_COLLISION_CENTER,
+            GRIPPER_FINGER_LINK8_COVER_VISUAL_CENTER,
             GRIPPER_FINGER_LINK8_COVER_RPY,
             GRIPPER_FINGER_LINK8_COVER_BASE_Y,
+            alpha=cover_alpha,
         )
 
 
@@ -365,17 +431,40 @@ def add_box_collision(link_element, name, center, size, rpy=(0.0, 0.0, 0.0)):
     ET.SubElement(geometry_element, "box", size=format_urdf_values(size))
 
 
-def replace_link_collisions_with_boxes(root, link_name, collisions):
+def add_box_visual(link_element, name, center, size, color, rpy=(0.0, 0.0, 0.0)):
+    visual_element = ET.SubElement(link_element, "visual", {"name": name})
+    ET.SubElement(
+        visual_element,
+        "origin",
+        xyz=format_urdf_values(center),
+        rpy=format_urdf_values(rpy),
+    )
+    geometry_element = ET.SubElement(visual_element, "geometry")
+    ET.SubElement(geometry_element, "box", size=format_urdf_values(size))
+    material_element = ET.SubElement(visual_element, "material", {"name": name})
+    ET.SubElement(material_element, "color", {"rgba": format_urdf_values(color)})
+
+
+def replace_link_collisions_with_boxes(root, link_name, collisions, show_debug_visuals=False):
     link_element = root.find(f"./link[@name='{link_name}']")
     if link_element is None:
         raise RuntimeError(f"Missing URDF link for finger collision: {link_name}")
     for collision in list(link_element.findall("collision")):
         link_element.remove(collision)
-    for name, center, size, rpy in collisions:
+    for name, center, size, rpy, debug_color in collisions:
         add_box_collision(link_element, name, center, size, rpy)
+        if show_debug_visuals:
+            add_box_visual(
+                link_element,
+                f"{name}_debug_visual",
+                center,
+                size,
+                debug_color,
+                rpy,
+            )
 
 
-def apply_simple_gripper_collisions(root):
+def apply_simple_gripper_collisions(root, show_debug_visuals=False):
     for side in ("left", "right"):
         replace_link_collisions_with_boxes(
             root,
@@ -386,14 +475,17 @@ def apply_simple_gripper_collisions(root):
                     GENESIS_LINK7_BODY_COLLISION_CENTER,
                     GENESIS_FINGER_BODY_COLLISION_BOX_SIZE,
                     (0.0, 0.0, 0.0),
+                    FINGER_BODY_COLLISION_DEBUG_COLOR,
                 ),
                 (
                     "finger_cover_collision",
                     GENESIS_LINK7_COVER_COLLISION_CENTER,
                     GENESIS_FINGER_COVER_COLLISION_BOX_SIZE,
                     GRIPPER_FINGER_LINK7_COVER_RPY,
+                    FINGER_COVER_COLLISION_DEBUG_COLOR,
                 ),
             ),
+            show_debug_visuals,
         )
         replace_link_collisions_with_boxes(
             root,
@@ -404,14 +496,17 @@ def apply_simple_gripper_collisions(root):
                     GENESIS_LINK8_BODY_COLLISION_CENTER,
                     GENESIS_FINGER_BODY_COLLISION_BOX_SIZE,
                     (0.0, 0.0, 0.0),
+                    FINGER_BODY_COLLISION_DEBUG_COLOR,
                 ),
                 (
                     "finger_cover_collision",
                     GENESIS_LINK8_COVER_COLLISION_CENTER,
                     GENESIS_FINGER_COVER_COLLISION_BOX_SIZE,
                     GRIPPER_FINGER_LINK8_COVER_RPY,
+                    FINGER_COVER_COLLISION_DEBUG_COLOR,
                 ),
             ),
+            show_debug_visuals,
         )
 
 
@@ -570,17 +665,19 @@ def make_scene(args, shirt_mesh_path, robot_urdf_path):
         if not args.no_ipc
         else gs.materials.Rigid(friction=0.7)
     )
-    shirt_material = gs.materials.FEM.Cloth(**GENESIS_IPC_CLOTH_KWARGS)
     table = scene.add_entity(
         morph=gs.morphs.Box(pos=tuple(TABLE_CENTER), size=tuple(TABLE_SIZE), fixed=True),
         material=table_material,
         surface=gs.surfaces.Default(color=(1.0, 1.0, 1.0, 1.0)),
     )
-    shirt = scene.add_entity(
-        morph=gs.morphs.Mesh(file=str(shirt_mesh_path), pos=tuple(SHIRT_CENTER), euler=(0.0, 0.0, 0.0)),
-        material=shirt_material,
-        surface=gs.surfaces.Default(color=SHIRT_COLOR),
-    )
+    shirt = None
+    if not args.gripper_close_diagnostic:
+        shirt_material = gs.materials.FEM.Cloth(**GENESIS_IPC_CLOTH_KWARGS)
+        shirt = scene.add_entity(
+            morph=gs.morphs.Mesh(file=str(shirt_mesh_path), pos=tuple(SHIRT_CENTER), euler=(0.0, 0.0, 0.0)),
+            material=shirt_material,
+            surface=gs.surfaces.Default(color=SHIRT_COLOR),
+        )
     robot = None
     if should_show_piper(args):
         robot_material = (
@@ -709,11 +806,17 @@ def piper_finger_collision_centers(robot):
 def piper_gripper_diagnostics(robot):
     finger_centers = piper_finger_collision_centers(robot)
     gripper_qpos = robot.get_qpos(qs_idx_local=ALL_GRIPPER_DOFS).detach().cpu().numpy()
+    left_cover_delta = finger_centers[0] - finger_centers[1]
+    right_cover_delta = finger_centers[2] - finger_centers[3]
     return {
         "left_finger_z": float(np.mean(finger_centers[:2, 2])),
         "right_finger_z": float(np.mean(finger_centers[2:, 2])),
-        "left_gap": float(np.mean(np.abs(gripper_qpos[:2]))),
-        "right_gap": float(np.mean(np.abs(gripper_qpos[2:]))),
+        "left_qpos_gap": float(np.mean(np.abs(gripper_qpos[:2]))),
+        "right_qpos_gap": float(np.mean(np.abs(gripper_qpos[2:]))),
+        "left_cover_gap": float(np.linalg.norm(left_cover_delta)),
+        "right_cover_gap": float(np.linalg.norm(right_cover_delta)),
+        "left_cover_delta": left_cover_delta,
+        "right_cover_delta": right_cover_delta,
     }
 
 
@@ -787,27 +890,27 @@ def solve_piper_qpos(robot, seed_qpos, target_positions, gripper_qpos):
     return target_qpos, float(np.linalg.norm(error.detach().cpu().numpy()[..., :3]))
 
 
-def zero_open_qpos():
+def zero_open_qpos(open_gripper):
     qpos = zero_initial_qpos(CLOSED_OPENING)
-    qpos[ALL_GRIPPER_DOFS] = OPEN_GRIPPER
+    qpos[ALL_GRIPPER_DOFS] = open_gripper
     return qpos
 
 
-def build_piper_motion_targets(robot, closed_gripper):
+def build_piper_motion_targets(robot, closed_gripper, open_gripper):
     target_specs = (
-        ("approach_open", PIPER_BASE_CONTACT_Y, PIPER_BASE_HIGH_Z, OPEN_GRIPPER, 0.0),
-        ("low_open", PIPER_BASE_CONTACT_Y, PIPER_BASE_CONTACT_Z, OPEN_GRIPPER, 0.0),
+        ("approach_open", PIPER_BASE_CONTACT_Y, PIPER_BASE_HIGH_Z, open_gripper, 0.0),
+        ("low_open", PIPER_BASE_CONTACT_Y, PIPER_BASE_CONTACT_Z, open_gripper, 0.0),
         ("low_closed", PIPER_BASE_CONTACT_Y, PIPER_BASE_CONTACT_Z, closed_gripper, 0.0),
         ("pushed_closed", PIPER_BASE_PUSH_Y, PIPER_BASE_CONTACT_Z, closed_gripper, 0.0),
         ("lift", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, closed_gripper, 0.0),
         ("shake_left", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, closed_gripper, -PIPER_SHAKE_X_OFFSET),
         ("shake_right", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, closed_gripper, PIPER_SHAKE_X_OFFSET),
         ("shake_center", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, closed_gripper, 0.0),
-        ("release", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, OPEN_GRIPPER, 0.0),
-        ("retreat", PIPER_BASE_START_Y, PIPER_BASE_LIFT_Z, OPEN_GRIPPER, 0.0),
+        ("release", PIPER_BASE_PUSH_Y, PIPER_BASE_LIFT_Z, open_gripper, 0.0),
+        ("retreat", PIPER_BASE_START_Y, PIPER_BASE_LIFT_Z, open_gripper, 0.0),
     )
     targets = {}
-    seed_qpos = zero_open_qpos()
+    seed_qpos = zero_open_qpos(open_gripper)
     for name, y, z, gripper_qpos, x_offset in target_specs:
         target_qpos, error_norm = solve_piper_qpos(
             robot,
@@ -955,12 +1058,17 @@ def step_phase(
             stats = cloth_stats(shirt)
             if robot is None:
                 finger_z = float("nan")
-                grip_gap = float("nan")
+                qpos_gap = float("nan")
+                cover_gap = float("nan")
                 diagnostics = {
                     "left_finger_z": float("nan"),
                     "right_finger_z": float("nan"),
-                    "left_gap": float("nan"),
-                    "right_gap": float("nan"),
+                    "left_qpos_gap": float("nan"),
+                    "right_qpos_gap": float("nan"),
+                    "left_cover_gap": float("nan"),
+                    "right_cover_gap": float("nan"),
+                    "left_cover_delta": np.full(3, np.nan),
+                    "right_cover_delta": np.full(3, np.nan),
                 }
                 proximity = {
                     "left_near_particles": 0,
@@ -974,15 +1082,19 @@ def step_phase(
                 diagnostics = piper_gripper_diagnostics(robot)
                 proximity = gripper_cloth_proximity_diagnostics(robot, shirt)
                 finger_z = 0.5 * (diagnostics["left_finger_z"] + diagnostics["right_finger_z"])
-                grip_gap = 0.5 * (diagnostics["left_gap"] + diagnostics["right_gap"])
+                qpos_gap = 0.5 * (diagnostics["left_qpos_gap"] + diagnostics["right_qpos_gap"])
+                cover_gap = 0.5 * (diagnostics["left_cover_gap"] + diagnostics["right_cover_gap"])
             print(
                 f"[{phase:>8s}] step={i + 1:04d} "
                 f"centroid=({stats['centroid'][0]:+.3f}, {stats['centroid'][1]:+.3f}, {stats['centroid'][2]:+.3f}) "
                 f"z_min={stats['min_z']:.3f} z_max={stats['max_z']:.3f} "
                 f"span=({stats['span_x']:.3f},{stats['span_y']:.3f}) z_std={stats['std_z']:.4f} "
-                f"finger_z={finger_z:.3f} grip_gap={grip_gap:.4f} "
+                f"finger_z={finger_z:.3f} qpos_gap={qpos_gap:.4f} cover_gap={cover_gap:.4f} "
                 f"left_z={diagnostics['left_finger_z']:.3f} right_z={diagnostics['right_finger_z']:.3f} "
-                f"left_gap={diagnostics['left_gap']:.4f} right_gap={diagnostics['right_gap']:.4f} "
+                f"left_qgap={diagnostics['left_qpos_gap']:.4f} right_qgap={diagnostics['right_qpos_gap']:.4f} "
+                f"left_cgap={diagnostics['left_cover_gap']:.4f} right_cgap={diagnostics['right_cover_gap']:.4f} "
+                f"left_cvec=({diagnostics['left_cover_delta'][0]:+.3f},{diagnostics['left_cover_delta'][1]:+.3f},{diagnostics['left_cover_delta'][2]:+.3f}) "
+                f"right_cvec=({diagnostics['right_cover_delta'][0]:+.3f},{diagnostics['right_cover_delta'][1]:+.3f},{diagnostics['right_cover_delta'][2]:+.3f}) "
                 f"left_near={proximity['left_near_particles']} right_near={proximity['right_near_particles']} "
                 f"left_d={proximity['left_nearest_cloth']:.3f} right_d={proximity['right_nearest_cloth']:.3f} "
                 f"left_near_z={proximity['left_near_max_z']:.3f} right_near_z={proximity['right_near_max_z']:.3f} "
@@ -990,13 +1102,88 @@ def step_phase(
             )
 
 
+def step_gripper_phase(scene, robot, cameras, phase, qpos_targets, record, log_interval=10):
+    phase_targets = tuple(qpos_targets)
+    for i, qpos_target in enumerate(phase_targets):
+        robot.control_dofs_position(qpos_target[ALL_CONTROL_DOFS], ALL_CONTROL_DOFS)
+        scene.step()
+        record_frame(cameras, record)
+        is_final_step = i + 1 == len(phase_targets)
+        if i == 0 or is_final_step or (i + 1) % log_interval == 0:
+            diagnostics = piper_gripper_diagnostics(robot)
+            qpos_gap = 0.5 * (diagnostics["left_qpos_gap"] + diagnostics["right_qpos_gap"])
+            cover_gap = 0.5 * (diagnostics["left_cover_gap"] + diagnostics["right_cover_gap"])
+            print(
+                f"[{phase:>8s}] step={i + 1:04d} "
+                f"finger_z={0.5 * (diagnostics['left_finger_z'] + diagnostics['right_finger_z']):.3f} "
+                f"qpos_gap={qpos_gap:.4f} cover_gap={cover_gap:.4f} "
+                f"left_qgap={diagnostics['left_qpos_gap']:.4f} right_qgap={diagnostics['right_qpos_gap']:.4f} "
+                f"left_cgap={diagnostics['left_cover_gap']:.4f} right_cgap={diagnostics['right_cover_gap']:.4f} "
+                f"left_cvec=({diagnostics['left_cover_delta'][0]:+.3f},{diagnostics['left_cover_delta'][1]:+.3f},{diagnostics['left_cover_delta'][2]:+.3f}) "
+                f"right_cvec=({diagnostics['right_cover_delta'][0]:+.3f},{diagnostics['right_cover_delta'][1]:+.3f},{diagnostics['right_cover_delta'][2]:+.3f})"
+            )
+
+
+def qpos_with_gripper(base_qpos, gripper_qpos):
+    qpos = np.array(base_qpos, dtype=np.float32, copy=True)
+    qpos[ALL_GRIPPER_DOFS] = gripper_qpos
+    return qpos
+
+
+def run_gripper_close_diagnostic(scene, robot, cameras, camera_items, piper_targets, open_gripper, closed_gripper, args, output_dir):
+    low_open_qpos = piper_targets["low_open"]
+    low_closed_fixed_arm_qpos = qpos_with_gripper(low_open_qpos, closed_gripper)
+    robot.set_qpos(low_open_qpos, zero_velocity=True)
+    robot.control_dofs_position(low_open_qpos[ALL_CONTROL_DOFS], ALL_CONTROL_DOFS)
+    for _ in range(5):
+        scene.step()
+
+    if args.record:
+        for camera in cameras:
+            camera.start_recording()
+
+    try:
+        step_gripper_phase(
+            scene,
+            robot,
+            cameras,
+            "open_hold",
+            [low_open_qpos] * 20,
+            args.record,
+        )
+        step_gripper_phase(
+            scene,
+            robot,
+            cameras,
+            "close",
+            interpolate_qpos(low_open_qpos, low_closed_fixed_arm_qpos, 80),
+            args.record,
+        )
+        step_gripper_phase(
+            scene,
+            robot,
+            cameras,
+            "hold",
+            [low_closed_fixed_arm_qpos] * 80,
+            args.record,
+        )
+    finally:
+        if args.record:
+            video_path = output_dir / args.video_name
+            recording_paths = save_camera_recordings(camera_items, output_dir, video_path)
+            compose_left_mid_right_video(recording_paths, output_dir, args.combined_video_name)
+
+
 def main():
     args = parse_args()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    shirt_mesh_path = resolve_tshirt_obj(args)
+    shirt_mesh_path = None if args.gripper_close_diagnostic else resolve_tshirt_obj(args)
     robot_urdf_path = (
-        make_piper_urdf(output_dir / "piper_x_dualarm_genesis.urdf")
+        make_piper_urdf(
+            output_dir / "piper_x_dualarm_genesis.urdf",
+            show_finger_collision_boxes=args.show_finger_collision_boxes,
+        )
         if should_show_piper(args)
         else None
     )
@@ -1005,9 +1192,10 @@ def main():
     scene, _, shirt, robot, camera_items = make_scene(args, shirt_mesh_path, robot_urdf_path)
     cameras = [camera for _, camera in camera_items]
 
+    open_gripper = gripper_qpos(args.open_opening)
     closed_gripper = gripper_qpos(args.closed_opening)
     closed_init_qpos = zero_initial_qpos(args.closed_opening)
-    open_start_qpos = zero_open_qpos()
+    open_start_qpos = zero_open_qpos(open_gripper)
     initial_qpos = closed_init_qpos if args.init_only else open_start_qpos
     if robot is not None:
         set_robot_init_qpos(robot, initial_qpos)
@@ -1028,17 +1216,33 @@ def main():
             np.array([87.0] * 12 + [PIPER_GRIPPER_FORCE_LIMIT] * 4, dtype=np.float32),
             ALL_CONTROL_DOFS,
         )
-        piper_targets = build_piper_motion_targets(robot, closed_gripper)
+        piper_targets = build_piper_motion_targets(robot, closed_gripper, open_gripper)
     else:
         piper_targets = {}
 
+    if args.gripper_close_diagnostic:
+        run_gripper_close_diagnostic(
+            scene,
+            robot,
+            cameras,
+            camera_items,
+            piper_targets,
+            open_gripper,
+            closed_gripper,
+            args,
+            output_dir,
+        )
+        return
+
     physics_steps_per_action = max(1, int(round(0.35 * args.horizon_scale / SIM_DT)))
+    wide_open_dwell_scale = PIPER_WIDE_OPEN_CLOSE_DWELL_SCALE if args.open_opening > BASE_OPENING else 1.0
+    close_travel_scale = max(1.0, args.open_opening / BASE_OPENING) * wide_open_dwell_scale
     phase_steps = {
         "approach": max(physics_steps_per_action * 2, 6),
         "lower": max(physics_steps_per_action, 18),
         "hold_contact_open": max(physics_steps_per_action, 18),
-        "close": max(physics_steps_per_action * 4, 25),
-        "hold_closed": max(physics_steps_per_action * 8, 45),
+        "close": max(int(round(physics_steps_per_action * 4 * close_travel_scale)), int(round(25 * close_travel_scale))),
+        "hold_closed": max(int(round(physics_steps_per_action * 8 * close_travel_scale)), int(round(45 * close_travel_scale))),
         "push": max(physics_steps_per_action * 3, 9),
         "lift": max(physics_steps_per_action * 10, 50),
         "hold_lift": max(physics_steps_per_action * 8, 40),

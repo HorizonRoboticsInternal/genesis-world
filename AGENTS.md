@@ -166,13 +166,12 @@ Do NOT ask when:
   finger-body box and a separate cover-surface box. The cover collision box is
   the IK/manipulation reference point. Exact STL cover mesh collision is avoided
   for now because it is slower and more fragile for IPC than primitive pad
-  boxes. Match the primitive cover collision box to the STL visual bounds
-  before tuning trajectory/contact: the local cover mesh bounds are about
-  `0.0437 x 0.0700 x 0.0224 m`, centered near the finger link frame after the
-  current visual-origin transform. In the Piper finger joint frame, link-local
-  `Z` rotates into the gripper closing direction; a full `0.0224 m` visual
-  thickness intersects at Genesis IPC build time, so the primitive cover box
-  keeps the visual-matched `X/Y` footprint but clips local `Z` for clearance.
+  boxes. The local STL cover mesh bounds are about
+  `0.0437 x 0.0700 x 0.0224 m`; in the Piper finger joint frame, link-local
+  `Z` rotates into the gripper closing direction. A full visual-thickness cover
+  box intersects at Genesis IPC build time, so the primitive cover box is a
+  slim fingertip pad and the STL visual is shifted back slightly so the red
+  pad, not the black visual cover, defines the inner contact face.
 - For contact-only Piper-X shirt lift tuning, the covered-finger IPC box sizes
   are finger body `(0.020, 0.065, 0.010)` and cover surface
   `(0.043709, 0.070000, 0.014000)` in link-local XYZ, with cover collision
@@ -261,16 +260,59 @@ Do NOT ask when:
   stress-test shake repeats the centered left/right/left/center pattern four
   times with one-quarter segment duration, so it has four times the cycles and
   four times the lateral speed while keeping the phase duration about the same.
-  The open gripper target is the Isaac demo's `0.035 m`; increasing it by 50%
-  to `0.0525 m` caused a Genesis joint-limit warning and left the gripper
-  around `0.0506 m` even after close/hold, reducing actual clamping and causing
-  one-sided slip during fast shake. Do not use that wider opening as the
-  default unless the imported gripper limits/drive mapping are changed. The
+  Do not infer visual gripper opening from the commanded Piper-X gripper qpos
+  alone. In a robot-only FK/settling probe the cover-center gap is monotonic
+  (`0.035 m` command gave about `0.088 m`, `0.049 m` gave about `0.111 m`),
+  but in the full IPC-coupled shirt scene the actual lowered/contact
+  cover-center gap is nonmonotonic: `0.035` gave about `0.0608 m`, `0.030`
+  about `0.0643 m`, `0.025` about `0.0673 m`, `0.020` about `0.0575 m`, and
+  near-limit `0.049` only about `0.0506 m`. The current calibrated wider visual
+  opening is therefore `0.025 m`, even though it is numerically smaller than
+  the older `0.035 m` qpos command. Log physical cover-center gap/vector
+  diagnostics when tuning gripper opening; larger qpos is not necessarily
+  larger visual opening in the IPC-coupled episode. Increasing the target by
+  50% to `0.0525 m` also caused a Genesis joint-limit warning and reduced
+  actual clamping, so do not use that wider qpos command as the default unless
+  the imported gripper limits/drive mapping are changed. Use
+  `--show-finger-collision-boxes` to render colored body/cover collision boxes
+  in the generated Piper URDF; it also makes the cover STL half-transparent for
+  inspection. Raising the gripper drive to `kp=30000`, `kv=3000`, and force
+  limit `50000` reduced but did not eliminate contact back-driving: during
+  close/hold the commanded zero target still settled around `0.025-0.026`
+  actual qpos with `~0.018-0.020 m` physical cover-center gap. Treat zero-close
+  with the current thick cover boxes as geometry/contact-limited rather than
+  just a weak actuator issue. The later collision-box tuning keeps the blue
+  body boxes small and behind the fingertip
+  (`0.014 x 0.030 x 0.006`, centers at local `y=+/-0.050`) and makes the red
+  cover boxes the fingertip pads. The current red cover pad size is
+  `0.020 x 0.060 x 0.006`: thinner in the closing direction than the previous
+  `0.01790 m` slab and longer along the visible fingertip. The red inner face
+  is kept fixed while changing pad thickness, so the cover STL visual center
+  remains intentionally shifted from local `z=-0.0090` to about `z=-0.01176`.
+  This puts the black cover inner surface `0.5 mm` behind the red
+  collision-pad inner face in the actual opposed-finger projection. Moving the
+  red pad outward instead made the IPC world invalid at build time because the
+  covered fingers are too thick for a true zero-gap closed pose. Use
+  `--gripper-close-diagnostic --show-finger-collision-boxes --record` for a
+  short no-shirt, fixed-arm close/hold video. In that diagnostic with table
+  contact, the grippers still settled at about `0.0251` actual qpos and
+  `0.0182 m` cover-center gap, confirming that table/contact constraints can
+  still keep the fingers from reaching commanded zero even without cloth. With
+  the thinner/longer red pads, a full shirt run settled around `0.0258` qpos
+  with only about `0.0076-0.0080 m` cover-center gap during closed hold, and
+  `0.0065-0.0068 m` during lift/shake. That run lifted mostly on the right
+  gripper; diagnostics showed the left side lost nearby cloth during lift
+  (`left_near=0`, `left_d~0.2 m`) while the right side stayed near the cloth
+  (`right_d~0.006-0.007 m`). The
   close phase alone does not produce a strong shirt buckle: in the local
   default-opening fast-shake run, close changed cloth `span_y` only from about
   `0.379` to `0.375` and kept `z_std` around `0.007`. The larger wrinkle/fold
   signal appeared during push/lift, where `span_y` contracted and `z_std`
-  increased. The
+  increased. Lowering the Genesis contact target from `TABLE_TOP_Z + 0.018` to
+  `TABLE_TOP_Z + 0.012` improved immediate proximity only slightly, still did
+  not create close-phase buckling, and made fast-shake grasp stability worse
+  with one side losing proximity during shake; keep the default `+0.018` unless
+  another trajectory/contact strategy is being tested. The
   scripted approach/lift heights are
   `0.250 m` and `0.460 m`. Do not reuse the Isaac
   fingertip-contact height `0.220 m` directly in Genesis: with this table and
