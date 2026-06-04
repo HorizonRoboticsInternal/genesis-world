@@ -285,13 +285,30 @@ Do NOT ask when:
   body boxes small and behind the fingertip
   (`0.014 x 0.030 x 0.006`, centers at local `y=+/-0.050`) and makes the red
   cover boxes the fingertip pads. The current red cover pad size is
-  `0.012 x 0.040 x 0.003`: a thin inspection/contact slab near the visible
+  `0.040 x 0.064 x 0.006`: a larger contact slab inset within the measured
+  `0.0437 x 0.0700 x 0.0224 m` STL cover bounds, near the visible
   fingertip. Keep the cover STL visual at its natural center. A truly
   flush-to-visual red pad, even with this smaller footprint and zero proud
   margin, fails Genesis IPC build because the two visible cover inner faces are
   already interpenetrating in neutral geometry. The current working compromise
   backs the red contact face off `3 mm` from the visible cover inner face while
-  leaving the cover visual unshifted. Use
+  leaving the cover visual unshifted. Comparison against the earlier successful
+  `2026-06-03 15:32`-era fast-shake recordings showed the older
+  `0.043709 x 0.070000 x 0.014000` cover collision box held the shirt through
+  shake because it acted as a broad, deep contact proxy around the cover, not
+  because the later shake trajectory was gentler. The earlier visual-aligned
+  `0.012 x 0.040 x 0.003` red pad was more faithful as a fingertip inspection
+  slab, but captured far less cloth area and had little backside support, so one
+  or both grippers could lose proximity during lift/shake even with stronger
+  gripper drives. Treat the large old cover box as a robust grasping proxy and
+  the tiny red pad as a diagnostic/geometry-faithful proxy; the current
+  in-visual larger red pad is the next compromise to recover contact area
+  without overshooting the visible cover footprint or reintroducing closed-pose
+  self-intersection. The first focused run with this larger in-visual pad passed
+  IPC init and kept both grippers attached through the 4 cm fast-shake segment:
+  end-of-shake proximity stayed around `left_near=311`, `right_near=306` with
+  `left_d/right_d~0.017 m`, and max lift over the initial centroid was about
+  `0.0995 m`. Use
   `--gripper-close-diagnostic --show-finger-collision-boxes --record` for a
   short no-shirt, fixed-arm close/hold video. In that diagnostic with table
   contact, the grippers still settled at about `0.0251` actual qpos and
