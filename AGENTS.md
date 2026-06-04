@@ -170,8 +170,8 @@ Do NOT ask when:
   `0.0437 x 0.0700 x 0.0224 m`; in the Piper finger joint frame, link-local
   `Z` rotates into the gripper closing direction. A full visual-thickness cover
   box intersects at Genesis IPC build time, so the primitive cover box is a
-  slim fingertip pad and the STL visual is shifted back slightly so the red
-  pad, not the black visual cover, defines the inner contact face.
+  slim fingertip pad aligned to the STL visual inner face rather than a full
+  cover-volume collider.
 - For contact-only Piper-X shirt lift tuning, the covered-finger IPC box sizes
   are finger body `(0.020, 0.065, 0.010)` and cover surface
   `(0.043709, 0.070000, 0.014000)` in link-local XYZ, with cover collision
@@ -285,14 +285,13 @@ Do NOT ask when:
   body boxes small and behind the fingertip
   (`0.014 x 0.030 x 0.006`, centers at local `y=+/-0.050`) and makes the red
   cover boxes the fingertip pads. The current red cover pad size is
-  `0.020 x 0.060 x 0.006`: thinner in the closing direction than the previous
-  `0.01790 m` slab and longer along the visible fingertip. The red inner face
-  is kept fixed while changing pad thickness, so the cover STL visual center
-  remains intentionally shifted from local `z=-0.0090` to about `z=-0.01176`.
-  This puts the black cover inner surface `0.5 mm` behind the red
-  collision-pad inner face in the actual opposed-finger projection. Moving the
-  red pad outward instead made the IPC world invalid at build time because the
-  covered fingers are too thick for a true zero-gap closed pose. Use
+  `0.012 x 0.040 x 0.003`: a thin inspection/contact slab near the visible
+  fingertip. Keep the cover STL visual at its natural center. A truly
+  flush-to-visual red pad, even with this smaller footprint and zero proud
+  margin, fails Genesis IPC build because the two visible cover inner faces are
+  already interpenetrating in neutral geometry. The current working compromise
+  backs the red contact face off `3 mm` from the visible cover inner face while
+  leaving the cover visual unshifted. Use
   `--gripper-close-diagnostic --show-finger-collision-boxes --record` for a
   short no-shirt, fixed-arm close/hold video. In that diagnostic with table
   contact, the grippers still settled at about `0.0251` actual qpos and
