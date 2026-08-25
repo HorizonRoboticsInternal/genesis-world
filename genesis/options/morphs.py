@@ -1122,6 +1122,9 @@ class URDF(FileMorph):
         Sometimes a geom in a urdf file will be assigned a color, and the geom asset file also contains its own visual
         material. This parameter controls whether to prioritize the URDF-defined material over the asset's own material.
         Defaults to False.
+    preserve_collision_meshes : bool, optional
+        Whether to preserve collision meshes loaded by Genesis's URDF parser instead of replacing them with the
+        collision meshes loaded by MuJoCo. Defaults to False.
     merge_fixed_links : bool, optional
         Whether to merge links connected via a fixed joint. Defaults to True.
     links_to_keep : list of str, optional
@@ -1141,6 +1144,7 @@ class URDF(FileMorph):
 
     fixed: StrictBool = False
     prioritize_urdf_material: StrictBool = False
+    preserve_collision_meshes: StrictBool = False
     requires_jac_and_IK: StrictBool = True
     merge_fixed_links: StrictBool = True
     links_to_keep: StrArrayType = ()

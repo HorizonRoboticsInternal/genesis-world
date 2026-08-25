@@ -1,15 +1,46 @@
 import numpy as np
 import pytest
 import torch
+import trimesh
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.ext import urdfpy
 from genesis.utils.misc import tensor_to_array
 
 from ..utils import (
     assert_allclose,
     get_hf_dataset,
 )
+
+
+@pytest.mark.required
+def test_preserve_multipart_urdf_collisions(tmp_path):
+    mesh_path = tmp_path / "multipart.obj"
+    parts = [trimesh.creation.box((0.1, 0.1, 0.1)), trimesh.creation.box((0.1, 0.1, 0.1))]
+    parts[1].apply_translation((0.2, 0.0, 0.0))
+    trimesh.util.concatenate(parts).export(mesh_path)
+
+    def make_urdf():
+        mesh = urdfpy.Mesh(filename=str(mesh_path), meshes=[part.copy() for part in parts])
+        collision = urdfpy.Collision(name=None, origin=np.eye(4), geometry=urdfpy.Geometry(mesh=mesh))
+        link = urdfpy.Link(name="object", inertial=None, visuals=None, collisions=[collision])
+        return urdfpy.URDF(name="multipart", links=[link])
+
+    scene = gs.Scene(show_viewer=False)
+    entity = scene.add_entity(
+        morph=[
+            gs.morphs.URDF(
+                file=make_urdf(),
+                visualization=False,
+                preserve_collision_meshes=True,
+                recompute_inertia=True,
+            )
+            for _ in range(2)
+        ]
+    )
+
+    assert entity.n_geoms == 4
 
 
 @pytest.mark.required
