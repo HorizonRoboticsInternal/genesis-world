@@ -200,12 +200,10 @@ def get_asset_path(file):
 
 @wraps(trimesh.load, assigned=())
 def load_trimesh(*args, skip_materials_on_failure=False, **kwargs):
-    """Load a mesh file through 'trimesh.load', reading by default the files it references wherever they are on disk.
+    """Load a mesh file through 'trimesh.load' with the default file-path resolver.
 
-    trimesh refuses a referenced file (glTF buffer, OBJ material library, texture) whose resolved path leaves the folder
-    of the mesh file. The Hugging Face cache stores every file as a symlink to a blob elsewhere, and assets commonly
-    reference '../textures/...', so the default resolver of a file path accepts any path, at the cost of letting an
-    asset read any file on disk. A resolver given by the caller is used as is.
+    Trimesh 4 permits referenced files outside the mesh directory by default. Trimesh 5 restricts these paths unless
+    the caller supplies a permissive resolver. A resolver given by the caller is used as is.
 
     Parameters
     ----------
@@ -225,7 +223,7 @@ def load_trimesh(*args, skip_materials_on_failure=False, **kwargs):
 
     file_obj = load_args.arguments["file_obj"]
     if load_args.arguments.get("resolver") is None and isinstance(file_obj, (str, Path)):
-        load_args.arguments["resolver"] = trimesh.resolvers.FilePathResolver(file_obj, allow_anywhere=True)
+        load_args.arguments["resolver"] = trimesh.resolvers.FilePathResolver(file_obj)
     try:
         return trimesh.load(*load_args.args, **load_args.kwargs)
     except Exception as e:
