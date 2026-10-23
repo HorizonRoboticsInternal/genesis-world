@@ -25,7 +25,6 @@ import numpy as np
 import torch
 
 import numba as nb
-import zstandard
 
 import quadrants as qd
 
@@ -472,6 +471,8 @@ def save_checkpoint(path: str | os.PathLike, source: "TrajectorySource") -> None
     """Write the whole state of a built scene as a trajectory file of one frame, the record a trajectory ends with (see
     'Scene.save_checkpoint').
     """
+    import zstandard
+
     fields, frame_size = _frame_fields(source.sim, CHECKPOINT_FILE_KINDS, drop_unused=False)
     with open(path, "wb") as file:
         file.write(
@@ -508,6 +509,8 @@ class TrajectoryFileWriter(BaseFileWriter):
     """
 
     def build(self):
+        import zstandard
+
         self._source: TrajectorySource = self._data_func()
         sim = self._source.sim
         # The frames of the steps leave the unused arrays out, as they are read once per step. The last record holds
@@ -1040,6 +1043,8 @@ class Trajectory:
         vis_options: "VisOptions | None" = None,
         renderer: "RendererOptions | None" = None,
     ):
+        import zstandard
+
         # The scene module imports the recorders, so its classes are reached here rather than at import.
         from genesis.engine.scene import EnvironmentLayout, SceneCheckpoint, SceneDescription, description_digest
 
