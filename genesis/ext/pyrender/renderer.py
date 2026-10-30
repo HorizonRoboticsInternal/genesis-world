@@ -173,6 +173,8 @@ class Renderer(object):
         retval_list = None
         for i in range(n_envs):
             env_idx = i if use_env_idx else -1
+            if scene.light_color_scale is not None:
+                self.jit.set_lighting(scene, is_grid, env_idx)
 
             # Render necessary shadow maps
             if not (force_skip_shadows or flags & RenderFlags.SEG or flags & RenderFlags.DEPTH_ONLY):

@@ -1355,6 +1355,24 @@ class RasterizerContext:
             for camera in self.visualizer.cameras:
                 self.update_camera_frustum(camera)
 
+    def set_light_parameters(self, color, intensity, envs_idx=None):
+        """Set per-environment RGB tint and brightness multipliers for scene lighting.
+
+        color is (K, 3), intensity is (K,), and envs_idx contains Genesis env IDs.
+        Split renders use each environment's parameters; a grid view uses nominal lighting.
+        """
+        envs_idx = tensor_to_array(sanitize_index(envs_idx, -1, self.sim._B, 0, "envs_idx"))
+        if self._scene.light_color_scale is None:
+            self._scene.light_color_scale = np.ones((self._scene.n_envs, 3), dtype=np.float32)
+            self._scene.light_intensity_scale = np.ones(self._scene.n_envs, dtype=np.float32)
+        # The renderer's batch can be a reordered subset of the simulation batch.
+        source, rendered = np.nonzero(np.asarray(envs_idx)[:, None] == self.rendered_envs_idx)
+        colors = np.broadcast_to(tensor_to_array(color), (len(envs_idx), 3))
+        intensities = np.broadcast_to(tensor_to_array(intensity), (len(envs_idx),))
+        self._scene.light_color_scale[rendered] = colors[source]
+        self._scene.light_intensity_scale[rendered] = intensities[source]
+        self._scene.light_revision += 1
+
     def add_light(self, light):
         # light direction is light pose's -z frame
         if isinstance(light, gs.options.vis.DirectionalLight):

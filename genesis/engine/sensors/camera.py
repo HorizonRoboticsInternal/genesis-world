@@ -239,6 +239,7 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, None, SharedSensor
         # `uses_ring_pipeline = False` triggers the generic delay / jitter / history rejection in `Sensor.__init__`.
         super().__init__(options, idx, shared_context, shared_metadata, manager)
         self._stale: bool = True
+        self._offset_T: torch.Tensor | None = None
 
     # ========================== Cache Integration (shared) ==========================
 
@@ -278,6 +279,25 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, None, SharedSensor
 
     # ========================== Attachment handling ==========================
 
+    def _get_nominal_offset_T(self):
+        if self._options.offset_T is not None:
+            return torch.tensor(self._options.offset_T, dtype=gs.tc_float, device=gs.device)
+        pos = torch.tensor(self._options.pos, dtype=gs.tc_float, device=gs.device)
+        lookat = torch.tensor(self._options.lookat, dtype=gs.tc_float, device=gs.device)
+        up = torch.tensor(self._options.up, dtype=gs.tc_float, device=gs.device)
+        return pos_lookat_up_to_T(pos, lookat, up)
+
+    @gs.assert_built
+    def set_offset_T(self, offset_T, envs_idx=None):
+        """Set link-relative camera transforms for selected environments (K, 4, 4)."""
+        if self._offset_T is None:
+            self._offset_T = self._get_nominal_offset_T().expand(
+                self._manager._sim._B, 4, 4).clone()
+        envs_idx = self._manager._sim.scene._sanitize_envs_idx(envs_idx)
+        self._offset_T[envs_idx] = torch.as_tensor(offset_T, dtype=gs.tc_float, device=gs.device)
+        self._stale = True
+        self._shared_metadata.last_render_timestep = -1
+
     @gs.assert_built
     def move_to_attach(self):
         """
@@ -288,13 +308,7 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, None, SharedSensor
         if self._link is None:
             gs.raise_exception("Camera not attached to any rigid link.")
 
-        if self._options.offset_T is not None:
-            offset_T = torch.tensor(self._options.offset_T, dtype=gs.tc_float, device=gs.device)
-        else:
-            pos = torch.tensor(self._options.pos, dtype=gs.tc_float, device=gs.device)
-            lookat = torch.tensor(self._options.lookat, dtype=gs.tc_float, device=gs.device)
-            up = torch.tensor(self._options.up, dtype=gs.tc_float, device=gs.device)
-            offset_T = pos_lookat_up_to_T(pos, lookat, up)
+        offset_T = self._get_nominal_offset_T() if self._offset_T is None else self._offset_T
 
         link_pos = self._link.get_pos(relative=False)
         link_quat = self._link.get_quat(relative=False)

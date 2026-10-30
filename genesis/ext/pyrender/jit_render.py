@@ -328,7 +328,7 @@ class JITRenderer:
                     self.scene_bounds[is_grid] = np.stack((corners.min(axis=0), corners.max(axis=0)), axis=0)
         self._scene_revision = scene.revision
 
-    def set_lighting(self, scene, is_grid):
+    def set_lighting(self, scene, is_grid, env_idx=-1):
         """Set up the lights for a pass, and tell whether every shadow texture was found in the context.
 
         The setup follows the scene: the light poses and the bounds the directional shadow frustum is fitted to, which
@@ -337,9 +337,16 @@ class JITRenderer:
         """
         if self.scene_bounds[is_grid] is not None:
             scene.bounds = self.scene_bounds[is_grid]
-        lights_revision = (scene.revision, is_grid)
+        lights_revision = (scene.revision, is_grid, scene.light_revision, env_idx)
         if self._lights_revision != lights_revision:
             self._is_lighting_ready = self.set_light(scene, scene.light_nodes, scene.ambient_light)
+            if scene.light_color_scale is not None and (not is_grid or scene.n_envs == 1):
+                index = max(env_idx, 0)
+                tint = scene.light_color_scale[index]
+                brightness = scene.light_intensity_scale[index]
+                self.light[:, :3] *= tint
+                self.light[:, 6] *= brightness
+                self.ambient_light *= tint * brightness
             self._lights_revision = lights_revision if self._is_lighting_ready else None
         return self._is_lighting_ready
 

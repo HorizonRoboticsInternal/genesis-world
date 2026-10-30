@@ -68,6 +68,9 @@ class Scene(object):
         self.bg_color = bg_color
         self.ambient_light = ambient_light
         self.n_envs = n_envs
+        self.light_color_scale = None
+        self.light_intensity_scale = None
+        self.light_revision = 0
         self.name = name
 
         self._name_to_nodes = {}
