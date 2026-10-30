@@ -37,6 +37,7 @@ class Camera(metaclass=ABCMeta):
         self.name = name
         self.znear = znear
         self.zfar = zfar
+        self.excluded_nodes = frozenset()
 
     @property
     def name(self):

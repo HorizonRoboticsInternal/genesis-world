@@ -1348,6 +1348,10 @@ class JITRenderer:
         is_transparent = self.render_flags[:, 5].astype(bool)
         # Depth along the view axis grows towards the viewer, so ascending depth is farthest first
         draw_order = np.lexsort((np.where(is_transparent, depths, -depths), is_transparent)).astype(np.int32)
+        excluded_nodes = self._scene.main_camera_node.camera.excluded_nodes
+        if excluded_nodes:
+            visible = np.array([node not in excluded_nodes for node in self.node_list])
+            draw_order = draw_order[visible[draw_order]]
 
         with self._env_filtered_culling(env_idx):
             self._forward_pass(

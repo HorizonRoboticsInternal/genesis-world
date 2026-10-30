@@ -547,6 +547,16 @@ class RasterizerCameraSensor(
         self._ensure_camera_registered()
 
         self._shared_metadata.renderer.update_scene()
+        context = self._shared_metadata.context
+        camera = self._shared_metadata.renderer._camera_nodes[self._camera_wrapper.uid].camera
+        camera.excluded_nodes = frozenset()
+        if self._options.exclude_links_idx_local:
+            entity = self._manager._sim.entities[self._options.entity_idx]
+            camera.excluded_nodes = frozenset(
+                context.rigid_nodes[geom.uid]
+                for index in self._options.exclude_links_idx_local
+                for geom in entity.links[index].vgeoms if geom.uid in context.rigid_nodes
+            )
         rgb_arr, _, _, _ = self._shared_metadata.renderer.render_camera(
             self._camera_wrapper, rgb=True, depth=False, segmentation=False, normal=False, split_envs=True
         )

@@ -513,7 +513,7 @@ class Renderer(object):
             mesh = node.mesh
 
             # Skip the mesh if it's not visible
-            if not mesh.is_visible:
+            if not mesh.is_visible or node in scene.main_camera_node.camera.excluded_nodes:
                 continue
 
             for primitive in mesh.primitives:

@@ -78,10 +78,13 @@ class RasterizerCameraOptions(BaseCameraOptions["RasterizerCameraSensor"]):
         Near clipping plane distance. Default is 0.01.
     far : float
         Far clipping plane distance. Default is 100.0.
+    exclude_links_idx_local : tuple[int, ...]
+        Links of the attached entity whose visuals are hidden only from this camera.
     """
 
     near: PositiveFloat = 0.01
     far: PositiveFloat = 100.0
+    exclude_links_idx_local: tuple[int, ...] = ()
 
     def model_post_init(self, context: Any) -> None:
         super().model_post_init(context)
