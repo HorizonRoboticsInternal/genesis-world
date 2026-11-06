@@ -173,7 +173,7 @@ class Renderer(object):
         retval_list = None
         for i in range(n_envs):
             env_idx = i if use_env_idx else -1
-            if scene.light_color_scale is not None:
+            if scene.light_color_scale is not None or scene.light_direction_offsets is not None:
                 self.jit.set_lighting(scene, is_grid, env_idx)
 
             # Render necessary shadow maps
@@ -188,15 +188,15 @@ class Renderer(object):
                         take_pass = True
                     # The shadow texture lives on the light, so one map serves every renderer of the scene (the
                     # viewer window and each camera): it is rendered again once the scene changed or another
-                    # environment is drawn. The pass draws every opaque mesh in fill mode whatever the flags, so the
-                    # key is the scene revision and the environment alone.
-                    if take_pass and ln.light.shadow_map_revision != (scene.revision, env_idx):
+                    # environment is drawn. The light direction can also change without advancing physics.
+                    shadow_revision = (scene.revision, scene.light_direction_revision, env_idx)
+                    if take_pass and ln.light.shadow_map_revision != shadow_revision:
                         if isinstance(ln.light, PointLight):
                             self._point_shadow_mapping_pass(scene, ln, flags, env_idx=env_idx)
                         else:
                             self._shadow_mapping_pass(scene, ln, flags, env_idx=env_idx)
                         glBindFramebuffer(GL_FRAMEBUFFER, 0)
-                        ln.light.shadow_map_revision = (scene.revision, env_idx)
+                        ln.light.shadow_map_revision = shadow_revision
 
             if flags & RenderFlags.REFLECTIVE_FLOOR:
                 self._floor_pass(scene, flags, env_idx=env_idx)
@@ -498,7 +498,7 @@ class Renderer(object):
         self._configure_shadow_mapping_viewport(light, flags)
 
         # Set up camera matrices
-        V, P = self._get_light_cam_matrices(scene, light_node, flags)
+        V, P = self._get_light_cam_matrices(scene, light_node, flags, env_idx)
 
         self.jit.shadow_mapping_pass(self, V, P, flags, ProgramFlags.NONE, env_idx=env_idx)
 
@@ -703,9 +703,9 @@ class Renderer(object):
                 cam_pos = cam_pos[0]
         return cam_pos
 
-    def _get_light_cam_matrices(self, scene, light_node, flags):
+    def _get_light_cam_matrices(self, scene, light_node, flags, env_idx=-1):
         light = light_node.light
-        pose = scene.get_pose(light_node)
+        pose = scene.get_light_pose(light_node, env_idx).copy()
         camera = light._get_shadow_camera(scene.scale)
         P = camera.get_projection_matrix()
         if isinstance(light, DirectionalLight):

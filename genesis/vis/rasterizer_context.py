@@ -1355,10 +1355,11 @@ class RasterizerContext:
             for camera in self.visualizer.cameras:
                 self.update_camera_frustum(camera)
 
-    def set_light_parameters(self, color, intensity, envs_idx=None):
+    def set_light_parameters(self, color, intensity, envs_idx=None, direction_offsets=None):
         """Set per-environment RGB tint and brightness multipliers for scene lighting.
 
         color is (K, 3), intensity is (K,), and envs_idx contains Genesis env IDs.
+        Optional direction_offsets is (K, 2), azimuth/elevation offsets in degrees.
         Split renders use each environment's parameters; a grid view uses nominal lighting.
         """
         envs_idx = tensor_to_array(sanitize_index(envs_idx, -1, self.sim._B, 0, "envs_idx"))
@@ -1371,6 +1372,12 @@ class RasterizerContext:
         intensities = np.broadcast_to(tensor_to_array(intensity), (len(envs_idx),))
         self._scene.light_color_scale[rendered] = colors[source]
         self._scene.light_intensity_scale[rendered] = intensities[source]
+        if direction_offsets is not None:
+            if self._scene.light_direction_offsets is None:
+                self._scene.light_direction_offsets = np.zeros((self._scene.n_envs, 2), dtype=np.float32)
+            offsets = np.broadcast_to(tensor_to_array(direction_offsets), (len(envs_idx), 2))
+            self._scene.light_direction_offsets[rendered] = offsets[source]
+            self._scene.light_direction_revision += 1
         self._scene.light_revision += 1
 
     def add_light(self, light):

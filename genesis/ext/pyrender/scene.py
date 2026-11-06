@@ -6,6 +6,7 @@ Author: Matthew Matl
 
 import networkx as nx
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from .camera import Camera
 from .light import DirectionalLight, Light, PointLight, SpotLight
@@ -70,6 +71,8 @@ class Scene(object):
         self.n_envs = n_envs
         self.light_color_scale = None
         self.light_intensity_scale = None
+        self.light_direction_offsets = None
+        self.light_direction_revision = 0
         self.light_revision = 0
         self.name = name
 
@@ -504,6 +507,23 @@ class Scene(object):
         for parent_node in path[1:-1]:
             pose = np.dot(parent_node.matrix, pose)
 
+        return pose
+
+    def get_light_pose(self, node, env_idx=-1):
+        """Apply an environment's azimuth/elevation offsets to a directional light."""
+        pose = self.get_pose(node)
+        if self.n_envs == 1:
+            env_idx = 0
+        if self.light_direction_offsets is None or env_idx < 0 or not isinstance(node.light, DirectionalLight):
+            return pose
+        azimuth, elevation = np.deg2rad(self.light_direction_offsets[env_idx])
+        direction = -pose[:3, 2]
+        heading = np.arctan2(direction[1], direction[0]) + azimuth
+        tilt_axis = np.array([-np.sin(heading), np.cos(heading), 0.])
+        rotation = (Rotation.from_rotvec(elevation * tilt_axis)
+                    * Rotation.from_euler("z", azimuth)).as_matrix()
+        pose = pose.copy()
+        pose[:3, :3] = rotation @ pose[:3, :3]
         return pose
 
     def set_pose(self, node, pose):

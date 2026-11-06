@@ -339,7 +339,7 @@ class JITRenderer:
             scene.bounds = self.scene_bounds[is_grid]
         lights_revision = (scene.revision, is_grid, scene.light_revision, env_idx)
         if self._lights_revision != lights_revision:
-            self._is_lighting_ready = self.set_light(scene, scene.light_nodes, scene.ambient_light)
+            self._is_lighting_ready = self.set_light(scene, scene.light_nodes, scene.ambient_light, env_idx)
             if scene.light_color_scale is not None and (not is_grid or scene.n_envs == 1):
                 index = max(env_idx, 0)
                 tint = scene.light_color_scale[index]
@@ -457,7 +457,7 @@ class JITRenderer:
                 pass
             self.env_offset_buffer = None
 
-    def set_light(self, scene, light_nodes, ambient_light):
+    def set_light(self, scene, light_nodes, ambient_light, env_idx=-1):
         self.light_list = light_nodes
 
         n = len(light_nodes)
@@ -476,7 +476,7 @@ class JITRenderer:
 
         for i, node in enumerate(light_nodes):
             light = node.light
-            pose = scene.get_pose(node)
+            pose = scene.get_light_pose(node, env_idx)
             position = pose[:3, 3]
             direction = -pose[:3, 2]
 
